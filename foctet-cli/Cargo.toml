@@ -1,0 +1,8 @@
+[package]
+name = "foctet-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Command-line interface for the Foctet protocol, providing tools for P2P communication and file transfer."
+
+[dependencies]

@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [
+    "foctet",
+    "foctet-cli",
+    "foctet-core", 
+    "foctet-net", 
+    "foctet-relay",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+authors = ["shellrow <shellrow@fortnium.com>"]

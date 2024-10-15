@@ -1,0 +1,8 @@
+[package]
+name = "foctet-relay"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Relay server for the Foctet protocol, designed to handle NAT traversal and peer discovery by relaying messages between peers."
+
+[dependencies]

@@ -1,0 +1,8 @@
+[package]
+name = "foctet-net"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Networking layer for the Foctet protocol, handling QUIC and TCP communication, P2P connections, and data transfer."
+
+[dependencies]

@@ -1,0 +1,10 @@
+[package]
+name = "foctet"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Foctet protocol library that integrates core, networking, and relay components into a unified interface for secure and fast communication."
+
+[dependencies]
+foctet-core = { path = "../foctet-core" }
+foctet-net = { path = "../foctet-net" }
