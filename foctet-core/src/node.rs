@@ -1,7 +1,6 @@
-use uuid::Uuid;
 use std::{collections::BTreeSet, net::SocketAddr};
 use serde::{Deserialize, Serialize};
-use crate::key::NodePublicKey;
+use crate::key::{self, NodePublicKey, UUID_V4_BYTES_LEN};
 
 /// The identifier for a node in the foctet network.
 /// This is the ED25519 public key of the node, with length 32 bytes.
@@ -71,24 +70,24 @@ impl NodeAddr {
 /// The connection ID for a relay server.
 /// 128-bit UUID (Universally Unique Identifier) v4 is used.
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct ConnectionId(String);
+pub struct ConnectionId([u8; UUID_V4_BYTES_LEN]);
 
 impl ConnectionId {
     /// Create a new connection ID with the given string.
     pub fn new() -> Self {
-        Self(generate_connection_id())
+        Self(key::generate_uuid_v4_bytes())
     }
-    /// Create an empty connection ID.
-    pub fn empty() -> Self {
-        Self(String::new())
+    /// Create an zero connection ID.
+    pub fn zero() -> Self {
+        Self([0; UUID_V4_BYTES_LEN])
     }
     /// Get the connection ID as a string slice.
     pub fn as_str(&self) -> &str {
-        &self.0
+        std::str::from_utf8(&self.0).unwrap_or_default()
     }
     /// Check if the connection ID is empty.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    pub fn is_zero(&self) -> bool {
+        self.0.iter().all(|&x| x == 0)
     }
 }
 
@@ -163,11 +162,4 @@ impl NodeConnection {
             connection_id,
         }
     }
-}
-
-/// Generate a new connection ID.
-/// 128-bit UUID (Universally Unique Identifier) v4 is used.
-pub fn generate_connection_id() -> String {
-    let unique_id: String = Uuid::new_v4().to_string();
-    unique_id
 }

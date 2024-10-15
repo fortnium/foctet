@@ -4,6 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use uuid::Uuid;
 use blake3::Hash;
 use ring::pkcs8::Document;
 use ring::rand::SystemRandom;
@@ -14,6 +15,8 @@ use ttl_cache::TtlCache;
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use anyhow::anyhow;
+
+pub const UUID_V4_BYTES_LEN: usize = 16;
 
 pub fn generate_key_pair() -> Result<Ed25519KeyPair> {
     let rng = SystemRandom::new();
@@ -205,6 +208,15 @@ impl NodeKeyPair {
         NodeKeyPair::load_from_file(&path)
     }
 
+}
+
+/// Generate a new UUID (Universally Unique Identifier) byte array.
+/// 128-bit (16 bytes) UUID v4 is used.
+pub fn generate_uuid_v4_bytes() -> [u8; UUID_V4_BYTES_LEN] {
+    let unique_id: Uuid = Uuid::new_v4();
+    let mut id = [0u8; UUID_V4_BYTES_LEN];
+    id.copy_from_slice(unique_id.as_bytes());
+    id
 }
 
 #[cfg(test)]
