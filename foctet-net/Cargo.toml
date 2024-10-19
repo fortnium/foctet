@@ -6,3 +6,22 @@ authors.workspace = true
 description = "Networking layer for the Foctet protocol, handling QUIC and TCP communication, P2P connections, and data transfer."
 
 [dependencies]
+foctet-core = { path = "../foctet-core" }
+anyhow = { version = "1" }
+serde = { version = "1.0", features = ["derive"] }
+futures = "0.3"
+tokio = { version = "1", features = ["rt", "net", "io-util", "fs", "macros", "sync"] }
+tokio-stream = "0.1"
+tokio-util = {version = "0.7.12", features = ["codec", "rt"] }
+tracing = "0.1"
+bytes = "1"
+netdev = "0.31"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-native-certs = "0.7"
+rustls-pemfile = "2.1"
+rustls-pki-types = "1.8"
+rcgen = "0.13"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"]} 
+quinn = "0.11"
+quinn-proto = "0.11"
+#tokio-tungstenite = { version = "0.23", features = ["__rustls-tls", "rustls-tls-native-roots", "rustls-tls-webpki-roots"] }
