@@ -1,5 +1,6 @@
 use serde::{Serialize, Deserialize};
 use crate::{key::{self, UUID_V4_BYTES_LEN}, node::{ConnectionId, NodeId}};
+use std::time::SystemTime;
 
 /// The frame structure that is sent between the peers
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
@@ -32,14 +33,16 @@ pub enum FrameType {
     Disconnected,
     Message,
     DataTransfer,
+    FileTransfer,
 }
 
 /// The type of the payload
 /// This can be a file chunk or a text message
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum PayloadType {
+    DataChunk,
     FileChunk,
-    TextMessage,
+    Text,
 }
 
 /// The content ID for a payload
@@ -82,6 +85,8 @@ pub struct Metadata {
     pub name: String,
     pub size: u64,
     pub hash: String,
+    pub created: SystemTime,
+    pub modified: SystemTime,
 }
 
 /// Represents the metadata of the file or compressed directory
@@ -91,4 +96,7 @@ pub struct FileMetadata {
     pub size: u64,
     pub hash: String,
     pub is_directory: bool,
+    pub created: SystemTime,
+    pub modified: SystemTime,
+    pub accessed: SystemTime,
 }

@@ -5,6 +5,7 @@ use flate2::Compression;
 use std::fs::{metadata, File};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use tar::Builder;
 
 /// Compresses a directory (recursively) into a .tar.gz archive
@@ -44,6 +45,9 @@ pub fn get_file_metadata(path: &Path, is_compressed_dir: bool) -> io::Result<Fil
         size: file_metadata.len(),
         hash: hash,
         is_directory: is_compressed_dir,
+        created: file_metadata.created().unwrap_or(SystemTime::UNIX_EPOCH),
+        modified: file_metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        accessed: file_metadata.accessed().unwrap_or(SystemTime::UNIX_EPOCH),
     })
 }
 
