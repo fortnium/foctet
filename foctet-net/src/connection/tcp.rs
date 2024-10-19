@@ -1,22 +1,66 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-
+use foctet_core::frame::Frame;
+use tokio::sync::mpsc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
 use anyhow::Result;
 use crate::config::SocketConfig;
 
-pub struct TcpConnection {
+use super::{ConnectionState, FoctetStream};
+
+pub struct TlsTcpStream {
     pub stream: TlsStream<TcpStream>,
-    // TODO: add more fields and methods
+}
+
+impl FoctetStream for TlsTcpStream {
+    async fn send_data(&mut self, stream_id: u64, data: &[u8]) -> Result<()> {
+        // TODO: Implement
+        Ok(())
+    }
+
+    async fn receive_data(&mut self, stream_id: u64, buffer: &mut [u8]) -> Result<usize> {
+        // TODO: Implement
+        Ok(0)
+    }
+
+    async fn send_frame(&mut self, stream_id: u64, frame: Frame) -> Result<()> {
+        // TODO: Implement
+        Ok(())
+    }
+
+    async fn receive_frame(&mut self, stream_id: u64) -> Result<usize> {
+        // TODO: Implement
+        Ok(0)
+    }
+
+    async fn send_file(&self, stream_id: u64, file_path: &std::path::Path) -> Result<()> {
+        // TODO: Implement
+        Ok(())
+    }
+
+    async fn receive_file(&self, stream_id: u64, file_path: &std::path::Path) -> Result<u64> {
+        // TODO: Implement
+        Ok(0)
+    }
+
+    fn close(&mut self) -> Result<()> {
+        // TODO: Implement
+        Ok(())
+    }
+}
+
+pub struct TcpConnection {
+    pub connection_id: u64,
+    pub stream: TlsStream<TcpStream>,
+    pub state: ConnectionState,
 }
 
 pub struct TcpSocket {
     config: SocketConfig,
     pub tls_connector: TlsConnector,
     pub tls_acceptor: TlsAcceptor,
-    pub connections: HashMap<u64, TcpConnection>,
+    pub connections: HashMap<u64, Arc<TcpConnection>>,
     next_connection_id: u64,
-    // TODO: add more fields and methods
 }
 
 impl TcpSocket {
@@ -38,19 +82,30 @@ impl TcpSocket {
         let tls_stream = self.tls_connector.connect(name, stream).await?;
         let id = self.next_connection_id;
         self.next_connection_id += 1;
-        self.connections.insert(id, TcpConnection { stream: TlsStream::Client(tls_stream) });
+        self.connections.insert(id, Arc::new(TcpConnection { connection_id: id, stream: TlsStream::Client(tls_stream), state: ConnectionState::Connected }));
         Ok(id)
     }
 
-    pub async fn listen(&mut self) -> Result<()> {
+    pub async fn listen(&mut self, sender: mpsc::Sender<Arc<TcpConnection>>) -> Result<()> {
         let listener = TcpListener::bind(self.config.server_addr).await?;
         while let Ok((stream, _addr)) = listener.accept().await {
             let tls_stream = self.tls_acceptor.accept(stream).await?;
             let id = self.next_connection_id;
+            let tcp_connection = Arc::new(TcpConnection { connection_id: id, stream: TlsStream::Server(tls_stream), state: ConnectionState::Connected });
+            let tcp_connection_clone = Arc::clone(&tcp_connection);
+            self.connections.insert(id, tcp_connection);
             self.next_connection_id += 1;
-            self.connections.insert(id, TcpConnection { stream: TlsStream::Server(tls_stream) });
+            sender.send(tcp_connection_clone).await?;
         }
         Ok(())
+    }
+
+    pub fn get_connection(&self, id: u64) -> Option<Arc<TcpConnection>> {
+        self.connections.get(&id).cloned()
+    }
+
+    pub fn get_all_connections(&self) -> Vec<Arc<TcpConnection>> {
+        self.connections.values().cloned().collect()
     }
 
     pub fn remove_connection(&mut self, id: u64) {

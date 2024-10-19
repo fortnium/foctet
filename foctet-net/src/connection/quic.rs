@@ -1,32 +1,69 @@
-use std::{collections::HashMap, net::SocketAddr};
-
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use foctet_core::frame::Frame;
+use tokio::sync::mpsc;
 use quinn::{ClientConfig, Connection, Endpoint, RecvStream, SendStream, ServerConfig};
 use anyhow::Result;
 use crate::config::SocketConfig;
-
-use super::endpoint;
+use super::{endpoint, ConnectionState, FoctetStream};
 
 pub struct QuicStream {
     pub send_stream: SendStream,
     pub recv_stream: RecvStream,
 }
 
+impl FoctetStream for QuicStream {
+    async fn send_data(&mut self, stream_id: u64, data: &[u8]) -> Result<()> {
+        // TODO: Implement
+        Ok(())
+    }
+
+    async fn receive_data(&mut self, stream_id: u64, buffer: &mut [u8]) -> Result<usize> {
+        // TODO: Implement
+        Ok(0)
+    }
+
+    async fn send_frame(&mut self, stream_id: u64, frame: Frame) -> Result<()> {
+        // TODO: Implement
+        Ok(())
+    }
+
+    async fn receive_frame(&mut self, stream_id: u64) -> Result<usize> {
+        // TODO: Implement
+        Ok(0)
+    }
+
+    async fn send_file(&self, stream_id: u64, file_path: &std::path::Path) -> Result<()> {
+        // TODO: Implement
+        Ok(())
+    }
+
+    async fn receive_file(&self, stream_id: u64, file_path: &std::path::Path) -> Result<u64> {
+        // TODO: Implement
+        Ok(0)
+    }
+
+    fn close(&mut self) -> Result<()> {
+        self.send_stream.finish()?;
+        Ok(())
+    }
+}
+
 pub struct QuicConnection {
+    pub connection_id: u64,
     /// The QUIC connection
     pub connection: Connection,
     /// The streams of the QUIC connection
     /// Key: Stream ID
     /// Value: The QUIC stream (SendStream, RecvStream)
     pub streams: HashMap<u64, QuicStream>,
-    // TODO: add more fields and methods
+    pub state: ConnectionState,
 }
 
 pub struct QuicSocket {
     pub config: SocketConfig,
     pub endpoint: Endpoint,
-    pub connections: HashMap<u64, QuicConnection>,
+    pub connections: HashMap<u64, Arc<QuicConnection>>,
     next_connection_id: u64,
-    // TODO: add more fields
 }
 
 impl QuicSocket {
@@ -47,23 +84,30 @@ impl QuicSocket {
         let connection = self.endpoint.connect(server_addr, server_name)?.await?;
         let id = self.next_connection_id;
         self.next_connection_id += 1;
-        self.connections.insert(id, QuicConnection {
+        self.connections.insert(id, Arc::new(QuicConnection {
+            connection_id: id,
             connection,
             streams: HashMap::new(),
-        });
+            state: ConnectionState::Connected,
+        }));
         Ok(id)
     }
 
-    pub async fn listen(&mut self) -> Result<()> {
+    pub async fn listen(&mut self, sender: mpsc::Sender<Arc<QuicConnection>>) -> Result<()> {
         while let Some(incoming) = self.endpoint.accept().await {
             match incoming.await {
                 Ok(connection) => {
                     let id = self.next_connection_id;
-                    self.next_connection_id += 1;
-                    self.connections.insert(id, QuicConnection {
+                    let quic_connection = Arc::new(QuicConnection {
+                        connection_id: id,
                         connection,
                         streams: HashMap::new(),
+                        state: ConnectionState::Connected,
                     });
+                    let quic_connection_clone = Arc::clone(&quic_connection);
+                    self.connections.insert(id, quic_connection);
+                    self.next_connection_id += 1;
+                    sender.send(quic_connection_clone).await?;
                 }
                 Err(e) => {
                     eprintln!("Error accepting connection: {:?}", e);
@@ -71,6 +115,14 @@ impl QuicSocket {
             };
         }
         Ok(())
+    }
+
+    pub fn get_connection(&self, id: u64) -> Option<Arc<QuicConnection>> {
+        self.connections.get(&id).cloned()
+    }
+
+    pub fn get_all_connections(&self) -> Vec<Arc<QuicConnection>> {
+        self.connections.values().cloned().collect()
     }
 
     pub fn remove_connection(&mut self, id: u64) {
