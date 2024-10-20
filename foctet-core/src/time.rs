@@ -5,7 +5,7 @@ use serde::{Serialize, Deserialize};
 pub struct UnixTimestamp(u64);
 
 impl UnixTimestamp {
-    /// 現在時刻を取得して`UnixTimestamp`として返す
+    /// Get the current time and return it as `UnixTimestamp`
     pub fn now() -> Self {
         let duration_since_epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -13,7 +13,7 @@ impl UnixTimestamp {
         UnixTimestamp(duration_since_epoch.as_secs())
     }
 
-    /// `SystemTime` から `UnixTimestamp` を作成
+    /// Create `UnixTimestamp` from `SystemTime`
     pub fn from_system_time(time: SystemTime) -> Self {
         let duration_since_epoch = time
             .duration_since(UNIX_EPOCH)
@@ -21,17 +21,17 @@ impl UnixTimestamp {
         UnixTimestamp(duration_since_epoch.as_secs())
     }
 
-    /// `UnixTimestamp` から `SystemTime` に変換
+    /// Convert `UnixTimestamp` to `SystemTime`
     pub fn to_system_time(self) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(self.0)
     }
 
-    /// `u64` のタイムスタンプ値から `UnixTimestamp` を作成
+    /// Create `UnixTimestamp` from `u64` timestamp value
     pub fn from_u64(timestamp: u64) -> Self {
         UnixTimestamp(timestamp)
     }
 
-    /// `UnixTimestamp` を `u64` に変換
+    /// Convert `UnixTimestamp` to `u64`
     pub fn as_u64(self) -> u64 {
         self.0
     }
