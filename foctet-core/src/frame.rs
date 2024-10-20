@@ -1,6 +1,5 @@
 use serde::{Serialize, Deserialize};
-use crate::{key::{self, UUID_V4_BYTES_LEN}, node::{ConnectionId, NodeId}};
-use std::time::SystemTime;
+use crate::{hash::Blake3Hash, key::{self, UUID_V4_BYTES_LEN}, node::{ConnectionId, NodeId}, time::UnixTimestamp};
 
 /// The frame structure that is sent between the peers
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
@@ -13,6 +12,32 @@ pub struct Frame {
     pub payload: Option<Payload>,
 }
 
+impl Frame {
+    /// Create a new frame with the given header and payload.
+    pub fn new(header: FrameHeader, payload: Option<Payload>) -> Self {
+        Self { header, payload }
+    }
+    pub fn empty() -> Self {
+        Self {
+            header: FrameHeader {
+                frame_type: FrameType::Message,
+                node_id: NodeId::zero(),
+                connection_id: None,
+                content_id: None,
+            },
+            payload: None,
+        }
+    }
+    /// Convert the frame to a byte array
+    pub fn to_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(self)
+    }
+    /// Convert a byte array to a frame
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::Error> {
+        bincode::deserialize(bytes)
+    }
+}
+
 /// The frame header containing metadata for routing and identification
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct FrameHeader {
@@ -22,6 +47,8 @@ pub struct FrameHeader {
     pub node_id: NodeId,
     /// The connection ID between the sender and the receiver
     pub connection_id: Option<ConnectionId>,
+    /// The content ID of the payload
+    pub content_id: Option<ContentId>,
 }
 
 /// The different types of frames in the protocol
@@ -34,15 +61,6 @@ pub enum FrameType {
     Message,
     DataTransfer,
     FileTransfer,
-}
-
-/// The type of the payload
-/// This can be a file chunk or a text message
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
-pub enum PayloadType {
-    DataChunk,
-    FileChunk,
-    Text,
 }
 
 /// The content ID for a payload
@@ -63,6 +81,10 @@ impl ContentId {
     pub fn as_str(&self) -> &str {
         std::str::from_utf8(&self.0).unwrap_or_default()
     }
+    /// Return the hexadecimal representation of the content ID.
+    pub fn to_hex(&self) -> String {
+        hex::encode(&self.0)
+    }
     /// Check if the connection ID is empty.
     pub fn is_zero(&self) -> bool {
         self.0.iter().all(|&x| x == 0)
@@ -73,30 +95,37 @@ impl ContentId {
 ///
 /// This can be a file chunk or a text message
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct Payload {
-    pub payload_type: PayloadType,
-    pub content_id: ContentId,
-    pub data: Vec<u8>,
+pub enum Payload {
+    #[serde(with = "serde_bytes")]
+    DataChunk(Vec<u8>),
+    #[serde(with = "serde_bytes")]
+    FileChunk(Vec<u8>),
+    Text(String),
+    FileMetadata(FileMetadata),
+    Metadata(Metadata),
 }
 
 /// Represents the metadata of the content
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct Metadata {
     pub name: String,
-    pub size: u64,
+    pub size: usize,
     pub hash: String,
-    pub created: SystemTime,
-    pub modified: SystemTime,
+    pub created: u64,
+    pub modified: u64,
 }
 
 /// Represents the metadata of the file or compressed directory
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct FileMetadata {
     pub name: String,
-    pub size: u64,
-    pub hash: String,
+    pub size: usize,
+    pub hash: Blake3Hash,
     pub is_directory: bool,
-    pub created: SystemTime,
-    pub modified: SystemTime,
-    pub accessed: SystemTime,
+    /// File created timestamp in Unix time
+    pub created: UnixTimestamp,
+    /// File modified timestamp in Unix time
+    pub modified: UnixTimestamp,
+    /// File accessed timestamp in Unix time
+    pub accessed: UnixTimestamp,
 }

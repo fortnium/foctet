@@ -1,12 +1,14 @@
 use crate::frame::FileMetadata;
 use crate::default::DEFAULT_CONFIG_DIR;
+use crate::time::UnixTimestamp;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::fs::{metadata, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 use tar::Builder;
+use anyhow::Result;
+use anyhow::anyhow;
 
 /// Compresses a directory (recursively) into a .tar.gz archive
 pub fn compress_directory(dir_path: &Path, output_file: &Path) -> io::Result<()> {
@@ -25,12 +27,9 @@ pub fn compress_directory(dir_path: &Path, output_file: &Path) -> io::Result<()>
 }
 
 /// Get file or directory metadata
-pub fn get_file_metadata(path: &Path, is_compressed_dir: bool) -> io::Result<FileMetadata> {
+pub fn get_file_metadata(path: &Path, is_compressed_dir: bool) -> Result<FileMetadata> {
     if !path.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Path is not a file",
-        ));
+        return Err(anyhow!("Path is not a file"));
     }
     let file_metadata = metadata(path)?;
     let name: String = path
@@ -39,15 +38,21 @@ pub fn get_file_metadata(path: &Path, is_compressed_dir: bool) -> io::Result<Fil
         .to_str()
         .unwrap_or_default()
         .to_string();
-    let hash = crate::hash::calculate_blake3_file_hash(path)?;
+    let hash = crate::hash::calculate_file_hash(path)?;
+
+    // Timestamps
+    let created: UnixTimestamp = UnixTimestamp::from_system_time(file_metadata.created()?);
+    let modified: UnixTimestamp = UnixTimestamp::from_system_time(file_metadata.modified()?);
+    let accessed: UnixTimestamp = UnixTimestamp::from_system_time(file_metadata.accessed()?);
+    
     Ok(FileMetadata {
         name: name,
-        size: file_metadata.len(),
+        size: file_metadata.len() as usize,
         hash: hash,
         is_directory: is_compressed_dir,
-        created: file_metadata.created().unwrap_or(SystemTime::UNIX_EPOCH),
-        modified: file_metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-        accessed: file_metadata.accessed().unwrap_or(SystemTime::UNIX_EPOCH),
+        created: created,
+        modified: modified,
+        accessed: accessed,
     })
 }
 

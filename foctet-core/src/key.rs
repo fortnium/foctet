@@ -5,7 +5,6 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use uuid::Uuid;
-use blake3::Hash;
 use ring::pkcs8::Document;
 use ring::rand::SystemRandom;
 use ring::signature::Ed25519KeyPair;
@@ -15,6 +14,8 @@ use ttl_cache::TtlCache;
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use anyhow::anyhow;
+
+use crate::hash::Blake3Hash;
 
 pub const UUID_V4_BYTES_LEN: usize = 16;
 
@@ -99,19 +100,14 @@ impl NodePublicKey {
         &self.public_key
     }
 
-    /// Returns the BLAKE3 hash of the public key, which can be used as a node ID.
-    pub fn node_id(&self) -> String {
-        crate::hash::calculate_blake3_bytes_hash(&self.public_key)
-    }
-
     /// Returns the BLAKE3 hash of the public key
-    pub fn hash(&self) -> Hash {
-        crate::hash::blake3_bytes_hash(&self.public_key)
+    pub fn hash(&self) -> Result<Blake3Hash> {
+        crate::hash::calculate_hash(&self.public_key)
     }
 
-    /// Returns the BLAKE3 hash of the public key,  as a hexadecimal string.
-    pub fn hash_hex(&self) -> String {
-        crate::hash::calculate_blake3_bytes_hash(&self.public_key)
+    /// Returns the BLAKE3 hash of the public key, as a hexadecimal string.
+    pub fn hash_hex(&self) -> Result<String> {
+        self.hash().map(|hash| hash.to_hex())
     }
 
     /// Returns the public key as a hexadecimal string.
@@ -141,6 +137,10 @@ impl NodePublicKey {
     /// Check if the public key is zero.
     pub fn is_zero(&self) -> bool {
         self.public_key.iter().all(|&x| x == 0)
+    }
+    /// Get the public key length.
+    pub fn len(&self) -> usize {
+        self.public_key.len()
     }
 }
 
@@ -266,7 +266,7 @@ mod tests {
         let public_key_bytes = key_pair.public_key().as_ref();
         let public_key = NodePublicKey::from_bytes(public_key_bytes);
         assert_eq!(public_key.as_bytes(), public_key.public_key.as_ref());
-        assert_eq!(public_key.node_id(), crate::hash::calculate_blake3_bytes_hash(public_key.as_bytes()));
+        assert_eq!(public_key.hash().unwrap(), crate::hash::calculate_hash(public_key.as_bytes()).unwrap());
         public_key.cache();
         let cached_public_key = NodePublicKey::from_cache(public_key.public_key).unwrap();
         assert_eq!(cached_public_key.as_bytes(), public_key.as_bytes());
@@ -275,14 +275,16 @@ mod tests {
     #[test]
     fn test_public_key_size() {
         let public_key = NodePublicKey::generate();
+        assert_eq!(public_key.len(), ED25519_PUBLIC_KEY_LEN);
         println!("Public key bytes: {:?}", public_key.public_key);
+        println!("Public key bytes len: {} bytes", public_key.len());
         println!("Public key hex: {}", public_key.to_hex());
         println!("Public key hex len: {}", public_key.to_hex().len());
-        println!("Node ID: {}", public_key.node_id());
-        println!("Node ID len: {}", public_key.node_id().len());
-        let public_key_bytes = public_key.as_bytes();
-        println!("Public key instance size: {} bytes", public_key_bytes.len());
-        assert_eq!(public_key.as_bytes().len(), ED25519_PUBLIC_KEY_LEN);
+        let hash = public_key.hash().unwrap();
+        println!("Hash: {:?}", hash.to_bytes());
+        println!("Hash len: {}", hash.len());
+        println!("Hash hex: {}", hash.to_hex());
+        println!("Hash hex len: {}", hash.to_hex().len());
     }
 
     #[test]

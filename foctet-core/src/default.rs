@@ -54,3 +54,6 @@ pub const DEFAULT_CONFIG_DIR: &str = ".foctet";
 /// [RFC 5958 Section 2]: https://tools.ietf.org/html/rfc5958#section-2
 /// [RFC 8410 Section 10.3]: https://tools.ietf.org/html/rfc8410#section-10.3
 pub const DEFAULT_KEYPAIR_FILE: &str = "id_ed25519.p8";
+
+/// The default blake3 hash length in bytes.
+pub const DEFAULT_HASH_LEN: usize = 32;
