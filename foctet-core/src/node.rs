@@ -67,7 +67,7 @@ impl NodeAddr {
     }
 }
 
-/// The connection ID for a relay server.
+/// The connection ID for a connection.
 /// 128-bit UUID (Universally Unique Identifier) v4 is used.
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ConnectionId([u8; UUID_V4_BYTES_LEN]);
