@@ -1,5 +1,6 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-use foctet_core::frame::Frame;
+use foctet_core::frame::{ContentId, Frame};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
@@ -13,38 +14,37 @@ pub struct TlsTcpStream {
 }
 
 impl FoctetStream for TlsTcpStream {
-    async fn send_data(&mut self, stream_id: u64, data: &[u8]) -> Result<()> {
-        // TODO: Implement
+    async fn send_data(&mut self, data: &[u8], content_id: Option<ContentId>) -> Result<()> {
         Ok(())
     }
 
-    async fn receive_data(&mut self, stream_id: u64, buffer: &mut [u8]) -> Result<usize> {
+    async fn receive_data(&mut self, buffer: &mut Vec<u8>, content_id: Option<ContentId>) -> Result<usize> {
         // TODO: Implement
         Ok(0)
     }
 
-    async fn send_frame(&mut self, stream_id: u64, frame: Frame) -> Result<()> {
+    async fn send_frame(&mut self, frame: Frame) -> Result<()> {
         // TODO: Implement
         Ok(())
     }
 
-    async fn receive_frame(&mut self, stream_id: u64) -> Result<usize> {
+    async fn receive_frame(&mut self, content_id: Option<ContentId>) -> Result<Frame> {
         // TODO: Implement
-        Ok(0)
+        Ok(Frame::empty())
     }
 
-    async fn send_file(&self, stream_id: u64, file_path: &std::path::Path) -> Result<()> {
+    async fn send_file(&mut self, file_path: &std::path::Path, content_id: Option<ContentId>) -> Result<()> {
         // TODO: Implement
         Ok(())
     }
 
-    async fn receive_file(&self, stream_id: u64, file_path: &std::path::Path) -> Result<u64> {
+    async fn receive_file(&mut self, file_path: &std::path::Path, content_id: Option<ContentId>) -> Result<u64> {
         // TODO: Implement
         Ok(0)
     }
 
-    fn close(&mut self) -> Result<()> {
-        // TODO: Implement
+    async fn close(&mut self) -> Result<()> {
+        self.stream.get_mut().0.shutdown().await?;
         Ok(())
     }
 }
