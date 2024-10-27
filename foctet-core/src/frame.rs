@@ -19,6 +19,7 @@ impl Frame {
     pub fn new(header: FrameHeader, payload: Option<Payload>) -> Self {
         Self { header, payload }
     }
+    /// Create a new frame with default empty header and no payload.
     pub fn empty() -> Self {
         Self {
             header: FrameHeader {
@@ -39,6 +40,32 @@ impl Frame {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::Error> {
         bincode::deserialize(bytes)
     }
+    /// Create TransferStart frame
+    pub fn transfer_start(node_id: NodeId, stream_id: StreamId, connection_id: Option<ConnectionId>, content_id: Option<ContentId>) -> Self {
+        Self {
+            header: FrameHeader {
+                frame_type: FrameType::TransferStart,
+                node_id,
+                stream_id,
+                connection_id,
+                content_id,
+            },
+            payload: None,
+        }
+    }
+    /// Create EndOfTransfer frame
+    pub fn end_of_transfer(node_id: NodeId, stream_id: StreamId, connection_id: Option<ConnectionId>, content_id: Option<ContentId>) -> Self {
+        Self {
+            header: FrameHeader {
+                frame_type: FrameType::EndOfTransfer,
+                node_id,
+                stream_id,
+                connection_id,
+                content_id,
+            },
+            payload: None,
+        }
+    }
 }
 
 /// The frame header containing metadata for routing and identification
@@ -54,6 +81,71 @@ pub struct FrameHeader {
     pub connection_id: Option<ConnectionId>,
     /// The content ID of the payload
     pub content_id: Option<ContentId>,
+}
+
+impl FrameHeader {
+    /// Starts building a new `FrameHeader` using `FrameHeaderBuilder`.
+    pub fn builder() -> FrameHeaderBuilder {
+        FrameHeaderBuilder::new()
+    }
+}
+
+pub struct FrameHeaderBuilder {
+    frame_type: FrameType,
+    node_id: NodeId,
+    stream_id: StreamId,
+    connection_id: Option<ConnectionId>,
+    content_id: Option<ContentId>,
+}
+
+impl FrameHeaderBuilder {
+    /// Creates a new `FrameHeaderBuilder` with the required fields.
+    pub fn new() -> Self {
+        Self {
+            frame_type: FrameType::Message,
+            node_id: NodeId::zero(),
+            stream_id: StreamId(0),
+            connection_id: None,
+            content_id: None,
+        }
+    }
+    /// Sets the frame type.
+    pub fn with_frame_type(mut self, frame_type: FrameType) -> Self {
+        self.frame_type = frame_type;
+        self
+    }
+    /// Sets the node ID.
+    pub fn with_node_id(mut self, node_id: NodeId) -> Self {
+        self.node_id = node_id;
+        self
+    }
+    /// Sets the stream ID.
+    pub fn with_stream_id(mut self, stream_id: StreamId) -> Self {
+        self.stream_id = stream_id;
+        self
+    }
+    /// Sets the connection ID.
+    pub fn with_connection_id(mut self, connection_id: ConnectionId) -> Self {
+        self.connection_id = Some(connection_id);
+        self
+    }
+
+    /// Sets the content ID.
+    pub fn with_content_id(mut self, content_id: ContentId) -> Self {
+        self.content_id = Some(content_id);
+        self
+    }
+
+    /// Builds the `FrameHeader`.
+    pub fn build(self) -> FrameHeader {
+        FrameHeader {
+            frame_type: self.frame_type,
+            node_id: self.node_id,
+            stream_id: self.stream_id,
+            connection_id: self.connection_id,
+            content_id: self.content_id,
+        }
+    }
 }
 
 /// The different types of frames in the protocol
