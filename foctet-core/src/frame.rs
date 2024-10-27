@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Serialize, Deserialize};
 use crate::{hash::Blake3Hash, key::{self, UUID_V4_BYTES_LEN}, node::{ConnectionId, NodeId}, time::UnixTimestamp};
 
@@ -22,6 +24,7 @@ impl Frame {
             header: FrameHeader {
                 frame_type: FrameType::Message,
                 node_id: NodeId::zero(),
+                stream_id: StreamId(0),
                 connection_id: None,
                 content_id: None,
             },
@@ -45,6 +48,8 @@ pub struct FrameHeader {
     pub frame_type: FrameType,
     /// The node ID of the sender (source)
     pub node_id: NodeId,
+    /// The stream ID of the frame
+    pub stream_id: StreamId,
     /// The connection ID between the sender and the receiver
     pub connection_id: Option<ConnectionId>,
     /// The content ID of the payload
@@ -61,6 +66,40 @@ pub enum FrameType {
     Message,
     DataTransfer,
     FileTransfer,
+    TransferStart,
+    EndOfTransfer,
+}
+
+/// Identifier for a stream within a particular connection
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct StreamId(pub u64);
+
+impl StreamId {
+    /// Create a new stream ID
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
+    /// Get the stream ID as a string
+    pub fn as_str(&self) -> String {
+        self.0.to_string()
+    }
+    /// Increment the stream ID by one
+    pub fn increment(&mut self) {
+        self.0 += 1;
+    }
+    /// Decrement the stream ID by one
+    /// If the stream ID is zero, it will remain zero.
+    pub fn decrement(&mut self) {
+        if self.0 > 0 {
+            self.0 -= 1;
+        }
+    }
+}
+
+impl fmt::Display for StreamId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "StreamId({})", self.0)
+    }
 }
 
 /// The content ID for a payload
