@@ -43,8 +43,13 @@ impl FoctetStream for QuicStream {
             framed_writer.send(serialized_message.into()).await?;
             offset = end;
         }
+        // Send the end of transfer message
+        let end_message = Frame::end_of_transfer(self.node_id.clone(), self.stream_id.clone(), Some(self.connection_id.clone()), content_id);
+        let serialized_message = end_message.to_bytes()?;
+        framed_writer.send(serialized_message.into()).await?;
+
         framed_writer.flush().await?;
-        framed_writer.get_mut().finish()?;
+        //framed_writer.get_mut().finish()?;
         Ok(())
     }
 
@@ -81,8 +86,13 @@ impl FoctetStream for QuicStream {
         let mut framed_writer = FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
         framed_writer.send(serialized_message.into()).await?;
+        // Send the end of transfer message
+        let end_message = Frame::end_of_transfer(self.node_id.clone(), self.stream_id.clone(), Some(self.connection_id.clone()), frame.header.content_id);
+        let serialized_message = end_message.to_bytes()?;
+        framed_writer.send(serialized_message.into()).await?;
+
         framed_writer.flush().await?;
-        framed_writer.get_mut().finish()?;
+        //framed_writer.get_mut().finish()?;
         Ok(())
     }
 
@@ -135,8 +145,13 @@ impl FoctetStream for QuicStream {
             let serialized_message = message.to_bytes()?;
             framed_writer.send(serialized_message.into()).await?;
         }
+        // Send the end of transfer message
+        let end_message = Frame::end_of_transfer(self.node_id.clone(), self.stream_id.clone(), Some(self.connection_id.clone()), content_id);
+        let serialized_message = end_message.to_bytes()?;
+        framed_writer.send(serialized_message.into()).await?;
+
         framed_writer.flush().await?;
-        framed_writer.get_mut().finish()?;
+        //framed_writer.get_mut().finish()?;
         Ok(())
     }
 

@@ -25,7 +25,7 @@ pub struct TlsTcpStream {
 
 impl FoctetStream for TlsTcpStream {
     async fn send_data(&mut self, data: &[u8], content_id: Option<ContentId>) -> Result<()> {
-        let mut framed_writer = FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
+        let mut framed_writer: FramedWrite<&mut TlsStream<TcpStream>, LengthDelimitedCodec> = FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let mut offset = 0;
         while offset < data.len() {
             let end = std::cmp::min(offset + self.send_buffer_size, data.len());
@@ -44,8 +44,13 @@ impl FoctetStream for TlsTcpStream {
             framed_writer.send(serialized_message.into()).await?;
             offset = end;
         }
+        // Send the end of transfer message
+        let end_message = Frame::end_of_transfer(self.node_id.clone(), self.stream_id.clone(), Some(self.connection_id.clone()), content_id.clone());
+        let serialized_message = end_message.to_bytes()?;
+        framed_writer.send(serialized_message.into()).await?;
+
         framed_writer.flush().await?;
-        framed_writer.get_mut().shutdown().await?;
+        //framed_writer.get_mut().shutdown().await?;
         Ok(())
     }
 
@@ -64,9 +69,18 @@ impl FoctetStream for TlsTcpStream {
                     if frame.header.content_id != content_id {
                         continue;
                     }
-                    if let Some(Payload::DataChunk(data)) = frame.payload {
-                        buffer.extend_from_slice(&data);
-                        total_bytes_read += data.len();
+                    match &frame.header.frame_type {
+                        FrameType::DataTransfer => {
+                            if let Some(Payload::DataChunk(data)) = frame.payload {
+                                buffer.extend_from_slice(&data);
+                                total_bytes_read += data.len();
+                            }
+                        },
+                        FrameType::EndOfTransfer => {
+                            tracing::info!("[{}]End of transfer detected", self.stream_id);
+                            break;
+                        },
+                        _ => continue,
                     }
                 }
                 Err(e) => {
@@ -82,8 +96,14 @@ impl FoctetStream for TlsTcpStream {
         let mut framed_writer = FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
         framed_writer.send(serialized_message.into()).await?;
+
+        // Send the end of transfer message
+        let end_message = Frame::end_of_transfer(self.node_id.clone(), self.stream_id.clone(), Some(self.connection_id.clone()), frame.header.content_id);
+        let serialized_message = end_message.to_bytes()?;
+        framed_writer.send(serialized_message.into()).await?;
+
         framed_writer.flush().await?;
-        framed_writer.get_mut().shutdown().await?;
+        //framed_writer.get_mut().shutdown().await?;
         Ok(())
     }
 
@@ -136,8 +156,13 @@ impl FoctetStream for TlsTcpStream {
             let serialized_message = message.to_bytes()?;
             framed_writer.send(serialized_message.into()).await?;
         }
+        // Send the end of transfer message
+        let end_message = Frame::end_of_transfer(self.node_id.clone(), self.stream_id.clone(), Some(self.connection_id.clone()), content_id);
+        let serialized_message = end_message.to_bytes()?;
+        framed_writer.send(serialized_message.into()).await?;
+        
         framed_writer.flush().await?;
-        framed_writer.get_mut().shutdown().await?;
+        //framed_writer.get_mut().shutdown().await?;
         Ok(())
     }
 
