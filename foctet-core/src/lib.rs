@@ -5,3 +5,4 @@ pub mod frame;
 pub mod hash;
 pub mod node;
 pub mod time;
+pub mod bytes;
