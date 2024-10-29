@@ -293,7 +293,7 @@ pub struct QuicSocket {
     pub node_id: NodeId,
     pub config: SocketConfig,
     pub endpoint: Endpoint,
-    pub connections: Arc<Mutex<HashMap<ConnectionId, Arc<QuicConnection>>>>,
+    pub connections: Arc<Mutex<HashMap<ConnectionId, Arc<Mutex<QuicConnection>>>>>,
 }
 
 impl QuicSocket {
@@ -309,25 +309,39 @@ impl QuicSocket {
             connections: Arc::new(Mutex::new(HashMap::new())),
         })
     }
-
-    pub async fn connect(&mut self, server_addr: SocketAddr, server_name: &str) -> Result<Arc<QuicConnection>> {
+    /// Creates a new QUIC client with the given socket options.
+    /// The socket acts as a client.
+    pub fn new_client(node_id: NodeId, config: SocketConfig) -> Result<Self> {
+        let client_config = endpoint::make_client_config(config.tls_config.client_config.clone())?;
+        let mut endpoint = Endpoint::client(config.bind_addr)?;
+        endpoint.set_default_client_config(client_config);
+        Ok(Self {
+            node_id: node_id,
+            config: config,
+            endpoint: endpoint,
+            connections: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+    pub async fn connect(&mut self, server_addr: SocketAddr, server_name: &str) -> Result<Arc<Mutex<QuicConnection>>> {
         let connection = self.endpoint.connect(server_addr, server_name)?.await?;
-        let quic_connection = Arc::new(QuicConnection::new(self.node_id.clone(), connection, &self.config));
+        let quic_connection = QuicConnection::new(self.node_id.clone(), connection, &self.config);
         let id = quic_connection.id();
+        let conn: Arc<Mutex<QuicConnection>> = Arc::new(Mutex::new(quic_connection));
         let mut connections = self.connections.lock().await;
-        connections.insert(id.clone(), Arc::clone(&quic_connection));
-        Ok(quic_connection)
+        connections.insert(id.clone(), Arc::clone(&conn));
+        Ok(conn)
     }
 
-    pub async fn listen(&mut self, sender: mpsc::Sender<Arc<QuicConnection>>) -> Result<()> {
+    pub async fn listen(&mut self, sender: mpsc::Sender<Arc<Mutex<QuicConnection>>>) -> Result<()> {
         while let Some(incoming) = self.endpoint.accept().await {
             match incoming.await {
                 Ok(connection) => {
-                    let quic_connection = Arc::new(QuicConnection::new(self.node_id.clone(), connection, &self.config));
+                    let quic_connection = QuicConnection::new(self.node_id.clone(), connection, &self.config);
                     let id = quic_connection.id();
+                    let conn = Arc::new(Mutex::new(quic_connection));
                     let mut connections = self.connections.lock().await;
-                    connections.insert(id, Arc::clone(&quic_connection));
-                    sender.send(quic_connection).await?;
+                    connections.insert(id, Arc::clone(&conn));
+                    sender.send(conn).await?;
                 }
                 Err(e) => {
                     eprintln!("Error accepting connection: {:?}", e);
@@ -337,12 +351,12 @@ impl QuicSocket {
         Ok(())
     }
 
-    pub async fn get_connection(&self, id: ConnectionId) -> Option<Arc<QuicConnection>> {
+    pub async fn get_connection(&self, id: ConnectionId) -> Option<Arc<Mutex<QuicConnection>>> {
         let connections = self.connections.lock().await;
         connections.get(&id).cloned()
     }
 
-    pub async fn get_all_connections(&self) -> Vec<Arc<QuicConnection>> {
+    pub async fn get_all_connections(&self) -> Vec<Arc<Mutex<QuicConnection>>> {
         let connections = self.connections.lock().await;
         connections.values().cloned().collect()
     }
@@ -355,7 +369,8 @@ impl QuicSocket {
         };
         // Close the connection if it exists
         if let Some(conn) = connection {
-            let mut conn = Arc::try_unwrap(conn).map_err(|_| anyhow!("Failed to remove connection"))?;
+            let conn = Arc::try_unwrap(conn).map_err(|_| anyhow!("Failed to remove connection"))?;
+            let mut conn = conn.lock().await;
             conn.close().await?;
         }
         Ok(())
