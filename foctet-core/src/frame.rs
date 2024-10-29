@@ -66,6 +66,13 @@ impl Frame {
             payload: None,
         }
     }
+    /// Get length of payload
+    pub fn payload_len(&self) -> usize {
+        match &self.payload {
+            Some(payload) => payload.len(),
+            None => 0,
+        }
+    }
 }
 
 /// The frame header containing metadata for routing and identification
@@ -234,6 +241,25 @@ pub enum Payload {
     Text(String),
     FileMetadata(FileMetadata),
     Metadata(Metadata),
+}
+
+impl Payload {
+    /// Get the size of the payload
+    pub fn len(&self) -> usize {
+        match self {
+            Self::DataChunk(data) => data.len(),
+            Self::FileChunk(data) => data.len(),
+            Self::Text(text) => text.len(),
+            Self::FileMetadata(metadata) => {
+                // Serialize the metadata to bytes and get the size
+                bincode::serialize(metadata).unwrap_or_default().len()
+            },
+            Self::Metadata(metadata) => {
+                // Serialize the metadata to bytes and get the size
+                bincode::serialize(metadata).unwrap_or_default().len()
+            },
+        }
+    }
 }
 
 /// Represents the metadata of the content
