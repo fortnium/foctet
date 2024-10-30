@@ -5,14 +5,8 @@ pub mod quic;
 use anyhow::Result;
 use foctet_core::frame::{ContentId, Frame};
 
-pub enum ConnectionState {
-    Connecting,
-    Connected,
-    Disconnected,
-}
-
 #[allow(async_fn_in_trait)]
-pub trait FoctetStream {
+pub trait NetworkStream {
     /// Sends data over the stream
     async fn send_data(&mut self, data: &[u8], content_id: Option<ContentId>) -> Result<()>;
 
@@ -33,4 +27,7 @@ pub trait FoctetStream {
 
     /// Gracefully closes the stream.
     async fn close(&mut self) -> Result<()>;
+
+    /// Returns the current state of the connection.
+    fn is_closed(&self) -> bool;
 }

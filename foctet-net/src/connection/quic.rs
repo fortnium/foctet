@@ -1,6 +1,8 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use foctet_core::error::StreamError;
 use foctet_core::frame::{ContentId, Frame, FrameHeader, FrameType, Payload, StreamId};
 use foctet_core::node::{ConnectionId, NodeId};
+use foctet_core::state::ConnectionState;
 use futures::sink::SinkExt;
 use tokio::sync::{mpsc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -10,7 +12,7 @@ use quinn::{ClientConfig, Connection, Endpoint, RecvStream, SendStream, ServerCo
 use anyhow::Result;
 use anyhow::anyhow;
 use crate::config::SocketConfig;
-use super::{endpoint, ConnectionState, FoctetStream};
+use super::{endpoint, NetworkStream};
 
 pub struct QuicStream {
     pub send_stream: SendStream,
@@ -20,9 +22,10 @@ pub struct QuicStream {
     pub connection_id: ConnectionId,
     pub send_buffer_size: usize,
     pub receive_buffer_size: usize,
+    pub is_closed: bool,
 }
 
-impl FoctetStream for QuicStream {
+impl NetworkStream for QuicStream {
     async fn send_data(&mut self, data: &[u8], content_id: Option<ContentId>) -> Result<()> {
         let mut framed_writer = FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let mut offset = 0;
@@ -118,7 +121,7 @@ impl FoctetStream for QuicStream {
                 }
             }
         }
-        Ok(Frame::empty())
+        Err(StreamError::Closed.into())
     }
 
     async fn send_file(&mut self, file_path: &std::path::Path, content_id: Option<ContentId>) -> Result<()> {
@@ -189,7 +192,12 @@ impl FoctetStream for QuicStream {
     async fn close(&mut self) -> Result<()> {
         self.send_stream.finish()?;
         self.recv_stream.stop(VarInt::from_u32(0))?;
+        self.is_closed = true;
         Ok(())
+    }
+
+    fn is_closed(&self) -> bool {
+        self.is_closed
     }
 }
 
@@ -230,6 +238,7 @@ impl QuicConnection {
             connection_id: self.connection_id.clone(),
             send_buffer_size: self.send_buffer_size,
             receive_buffer_size: self.receive_buffer_size,
+            is_closed: false,
         }));
         let mut streams = self.streams.lock().await;
         streams.insert(self.next_stream_id, Arc::clone(&quic_stream));
@@ -248,6 +257,7 @@ impl QuicConnection {
             connection_id: self.connection_id.clone(),
             send_buffer_size: self.send_buffer_size,
             receive_buffer_size: self.receive_buffer_size,
+            is_closed: false,
         }));
         let mut streams = self.streams.lock().await;
         streams.insert(self.next_stream_id, Arc::clone(&quic_stream));
@@ -265,10 +275,16 @@ impl QuicConnection {
         let mut streams = self.streams.lock().await;
         if let Some(stream) = streams.remove(&stream_id) {
             let mut stream = stream.lock().await;
-            stream.close().await?;
+            if stream.is_closed {
+                return Ok(());
+            } else {
+                stream.close().await?;
+            }
         }
         Ok(())
     }
+    /// Close the QUIC connection
+    /// This will close all streams associated with the connection
     pub async fn close(&mut self) -> Result<()> {
         let streams = self.streams.lock().await;
         // collect all stream IDs
