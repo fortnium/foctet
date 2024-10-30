@@ -1,6 +1,6 @@
 use clap::Parser;
 use foctet_core::{frame::Payload, node::NodeId};
-use foctet_net::connection::{quic::QuicSocket, FoctetStream};
+use foctet_net::connection::{quic::QuicSocket, NetworkStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::net::SocketAddr;
 use foctet_core::frame::{Frame, FrameHeader, FrameType};
@@ -63,24 +63,32 @@ async fn main() -> Result<()> {
     let mut quic_socket = QuicSocket::new_client(node_id, socket_config)?;
     match quic_socket.connect(args.server_addr, &args.server_name).await {
         Ok(conn) => {
+            // Connection
             let mut conn = conn.lock().await;
             tracing::info!("Connected to: {:?}", conn.node_id);
-            let stream = conn.open_stream().await?;
-            let mut stream = stream.lock().await;
-            let node_id = NodeId::generate();
-            let frame_header = FrameHeader::builder()
-                .with_frame_type(FrameType::Message)
-                .with_node_id(node_id)
-                .with_stream_id(stream.stream_id)
-                .build();
-            let payload = Payload::Text("Hello, world!".to_string());
-            let frame = Frame::new(frame_header, Some(payload));
-            tracing::info!("Sending a message...");
-            tracing::info!("Frame: {:?}", frame);
-            stream.send_frame(frame).await?;
-            tracing::info!("Message sent.");
-            stream.close().await?;
+            {
+                // Stream
+                let stream = conn.open_stream().await?;
+                let mut stream = stream.lock().await;
+                let node_id = NodeId::generate();
+                let frame_header = FrameHeader::builder()
+                    .with_frame_type(FrameType::Message)
+                    .with_node_id(node_id)
+                    .with_stream_id(stream.stream_id)
+                    .build();
+                let payload = Payload::Text("Hello, world!".to_string());
+                let frame = Frame::new(frame_header, Some(payload));
+                tracing::info!("Sending a message...");
+                tracing::info!("Frame: {:?}", frame);
+                stream.send_frame(frame).await?;
+                tracing::info!("Message sent.");
+                tracing::info!("closing stream...");
+                stream.close().await?;
+                tracing::info!("stream closed.");
+            }
+            tracing::info!("closing connection...");
             conn.close().await?;
+            tracing::info!("connection closed.");
         }
         Err(e) => {
             tracing::error!("Error connecting: {:?}", e);

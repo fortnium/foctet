@@ -1,6 +1,6 @@
 use clap::Parser;
-use foctet_core::node::NodeId;
-use foctet_net::connection::{quic::{QuicConnection, QuicSocket}, FoctetStream};
+use foctet_core::{error::StreamError, node::NodeId};
+use foctet_net::connection::{quic::{QuicConnection, QuicSocket}, NetworkStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::{net::SocketAddr, sync::Arc};
 use std::path::PathBuf;
@@ -98,21 +98,37 @@ async fn main() -> Result<()> {
                         break;
                     }
                 };
-                let mut stream = stream_mutex.lock().await;
-                match stream.receive_frame(None).await {
-                    Ok(frame) => {
-                        if frame.payload_len() < 128 {
-                            tracing::info!("Received frame: {:?}", frame);
-                        } else {
-                            tracing::info!("Received frame: {:?}", frame.header);
-                            tracing::info!("Payload length: {}", frame.payload_len());
+                tokio::spawn(async move {
+                    let mut stream = stream_mutex.lock().await;
+                    loop {
+                        match stream.receive_frame(None).await {
+                            Ok(frame) => {
+                                if frame.payload_len() < 128 {
+                                    tracing::info!("Received frame: {:?}", frame);
+                                } else {
+                                    tracing::info!("Received frame: {:?}", frame.header);
+                                    tracing::info!("Payload length: {}", frame.payload_len());
+                                }
+                            }
+                            Err(e) => {
+                                if let Some(stream_error) = e.downcast_ref::<StreamError>() {
+                                    match stream_error {
+                                        StreamError::Closed => {
+                                            tracing::info!("Stream closed.");
+                                        }
+                                        _ => {
+                                            tracing::error!("Error receiving frame: {:?}", e);
+                                        }
+                                    }
+                                }else{
+                                    tracing::error!("Error receiving frame: {:?}", e);
+                                }
+                                break;
+                            }
                         }
                     }
-                    Err(e) => {
-                        tracing::error!("Error receiving frame: {:?}", e);
-                        break;
-                    }
-                }
+                    tracing::info!("Closing stream {}", stream.stream_id);
+                });
             }
         });
     }
