@@ -76,12 +76,16 @@ async fn main() -> Result<()> {
                     .with_node_id(node_id)
                     .with_stream_id(stream.stream_id)
                     .build();
-                let payload = Payload::Text("Hello, world!".to_string());
+                let payload = Payload::Text("Hello! from client.".to_string());
                 let frame = Frame::new(frame_header, Some(payload));
                 tracing::info!("Sending a message...");
                 tracing::info!("Frame: {:?}", frame);
                 stream.send_frame(frame).await?;
                 tracing::info!("Message sent.");
+                // Wait for the server to respond
+                let frame = stream.receive_frame(None).await?;
+                tracing::info!("Received a message.");
+                tracing::info!("Frame: {:?}", frame);
                 tracing::info!("closing stream...");
                 stream.close().await?;
                 tracing::info!("stream closed.");

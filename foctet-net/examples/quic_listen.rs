@@ -1,5 +1,5 @@
 use clap::Parser;
-use foctet_core::{error::{ConnectionError, StreamError}, node::NodeId};
+use foctet_core::{error::{ConnectionError, StreamError}, frame::{Frame, FrameHeader, FrameType, Payload}, node::NodeId};
 use foctet_net::connection::{quic::{QuicConnection, QuicSocket}, NetworkStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::{net::SocketAddr, sync::Arc};
@@ -123,6 +123,25 @@ async fn main() -> Result<()> {
                                 }
                                 tracing::info!("{} Length: {:?}", stream.stream_id, frame.len());
                                 tracing::info!("{} Payload length: {}", stream.stream_id, frame.payload_len());
+                                // Send a response
+                                let frame_header = FrameHeader::builder()
+                                    .with_frame_type(FrameType::Message)
+                                    .with_node_id(stream.node_id.clone())
+                                    .with_stream_id(stream.stream_id)
+                                    .build();
+                                let payload = Payload::Text("Hello! from server.".to_string());
+                                let frame = Frame::new(frame_header, Some(payload));
+                                tracing::info!("{} Sending a response frame...", stream.stream_id);
+                                tracing::info!("Frame: {:?}", frame);
+                                match stream.send_frame(frame).await {
+                                    Ok(_) => {
+                                        tracing::info!("{} Response sent.", stream.stream_id);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("{} Error sending response: {:?}", stream.stream_id, e);
+                                        break;
+                                    }
+                                }
                             }
                             Err(e) => {
                                 if let Some(stream_error) = e.downcast_ref::<StreamError>() {
