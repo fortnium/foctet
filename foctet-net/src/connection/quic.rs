@@ -1,5 +1,5 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-use foctet_core::error::StreamError;
+use foctet_core::error::{ConnectionError, StreamError};
 use foctet_core::frame::{ContentId, Frame, FrameHeader, FrameType, Payload, StreamId};
 use foctet_core::node::{ConnectionId, NodeId};
 use foctet_core::state::ConnectionState;
@@ -90,9 +90,9 @@ impl NetworkStream for QuicStream {
         let serialized_message = frame.to_bytes()?;
         framed_writer.send(serialized_message.into()).await?;
         // Send the end of transfer message
-        let end_message = Frame::end_of_transfer(self.node_id.clone(), self.stream_id.clone(), Some(self.connection_id.clone()), frame.header.content_id);
-        let serialized_message = end_message.to_bytes()?;
-        framed_writer.send(serialized_message.into()).await?;
+        //let end_message = Frame::end_of_transfer(self.node_id.clone(), self.stream_id.clone(), Some(self.connection_id.clone()), frame.header.content_id);
+        //let serialized_message = end_message.to_bytes()?;
+        //framed_writer.send(serialized_message.into()).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
@@ -211,7 +211,7 @@ pub struct QuicConnection {
     pub state: ConnectionState,
     pub send_buffer_size: usize,
     pub receive_buffer_size: usize,
-    next_stream_id: StreamId,
+    pub next_stream_id: StreamId,
 }
 
 impl QuicConnection {
@@ -248,7 +248,24 @@ impl QuicConnection {
     }
 
     pub async fn accept_stream(&mut self) -> Result<Arc<Mutex<QuicStream>>> {
-        let (send_stream, recv_stream) = self.connection.accept_bi().await?;
+        let (send_stream, recv_stream) = match self.connection.accept_bi().await {
+            Ok(streams) => streams,
+            Err(e) => {
+                match e {
+                    quinn::ConnectionError::ApplicationClosed(_) => {
+                        self.state = ConnectionState::Disconnected;
+                        return Err(ConnectionError::Closed.into());
+                    }
+                    quinn::ConnectionError::ConnectionClosed(_) => {
+                        self.state = ConnectionState::Disconnected;
+                        return Err(ConnectionError::Closed.into());
+                    }
+                    _ => {
+                        return Err(anyhow!("Error accepting stream"));
+                    }
+                }
+            }
+        };
         let quic_stream = Arc::new(Mutex::new(QuicStream {
             send_stream: send_stream,
             recv_stream: recv_stream,
@@ -302,6 +319,9 @@ impl QuicConnection {
     }
     pub fn id(&self) -> ConnectionId {
         self.connection_id.clone()
+    }
+    pub fn remote_address(&self) -> SocketAddr {
+        self.connection.remote_address()
     }
 }
 
