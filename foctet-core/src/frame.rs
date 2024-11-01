@@ -66,6 +66,10 @@ impl Frame {
             payload: None,
         }
     }
+    /// Get legnth of the frame
+    pub fn len(&self) -> usize {
+        bincode::serialize(self).unwrap_or_default().len()
+    }
     /// Get length of payload
     pub fn payload_len(&self) -> usize {
         match &self.payload {
