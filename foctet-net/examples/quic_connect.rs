@@ -60,17 +60,17 @@ async fn main() -> Result<()> {
 
     let node_id = NodeId::generate();
 
-    let mut quic_socket = QuicSocket::new_client(node_id, socket_config)?;
+    let mut quic_socket = QuicSocket::new_client(node_id.clone(), socket_config)?;
     match quic_socket.connect(args.server_addr, &args.server_name).await {
         Ok(conn) => {
             // Connection
             let mut conn = conn.lock().await;
-            tracing::info!("Connected to: {:?}", conn.node_id);
+            tracing::info!("Connected to: {:?}", conn.remote_address());
             {
                 // Stream
                 let stream = conn.open_stream().await?;
                 let mut stream = stream.lock().await;
-                let node_id = NodeId::generate();
+                //let node_id = NodeId::generate();
                 let frame_header = FrameHeader::builder()
                     .with_frame_type(FrameType::Message)
                     .with_node_id(node_id)

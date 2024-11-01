@@ -1,5 +1,5 @@
 use clap::Parser;
-use foctet_core::{error::StreamError, node::NodeId};
+use foctet_core::{error::{ConnectionError, StreamError}, node::NodeId};
 use foctet_net::connection::{quic::{QuicConnection, QuicSocket}, NetworkStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::{net::SocketAddr, sync::Arc};
@@ -87,47 +87,61 @@ async fn main() -> Result<()> {
     while let Some(conn) = conn_rx.recv().await {
         tokio::spawn(async move {
             let mut conn = conn.lock().await;
-            tracing::info!("New connection: {:?}", conn.node_id);
+            tracing::info!("New connection: {:?}", conn.remote_address());
             loop {
+                tracing::info!("Waiting for incoming stream...");
                 let stream_mutex = match conn.accept_stream().await {
                     Ok(stream) => {
                         stream
                     }
                     Err(e) => {
-                        tracing::error!("Error accepting stream: {:?}", e);
+                        if let Some(stream_error) = e.downcast_ref::<ConnectionError>() {
+                            match stream_error {
+                                ConnectionError::Closed => {
+                                    tracing::info!("Connection closed while waiting for {}", conn.next_stream_id);
+                                }
+                                _ => {
+                                    tracing::error!("Error accepting stream: {:?}", e);
+                                }
+                            }
+                        }else{
+                            tracing::error!("Error accepting stream: {:?}", e);
+                        }
                         break;
                     }
                 };
                 tokio::spawn(async move {
                     let mut stream = stream_mutex.lock().await;
+                    tracing::info!("New stream: {}", stream.stream_id);
                     loop {
                         match stream.receive_frame(None).await {
                             Ok(frame) => {
                                 if frame.payload_len() < 128 {
-                                    tracing::info!("Received frame: {:?}", frame);
+                                    tracing::info!("{} Received frame: {:?}", stream.stream_id, frame);
                                 } else {
-                                    tracing::info!("Received frame: {:?}", frame.header);
-                                    tracing::info!("Payload length: {}", frame.payload_len());
+                                    tracing::info!("{} Received frame header: {:?}", stream.stream_id, frame.header);
                                 }
+                                tracing::info!("{} Length: {:?}", stream.stream_id, frame.len());
+                                tracing::info!("{} Payload length: {}", stream.stream_id, frame.payload_len());
                             }
                             Err(e) => {
                                 if let Some(stream_error) = e.downcast_ref::<StreamError>() {
                                     match stream_error {
                                         StreamError::Closed => {
-                                            tracing::info!("Stream closed.");
+                                            tracing::info!("{} Stream closed.", stream.stream_id);
                                         }
                                         _ => {
-                                            tracing::error!("Error receiving frame: {:?}", e);
+                                            tracing::error!("{} Error receiving frame: {:?}", stream.stream_id, e);
                                         }
                                     }
                                 }else{
-                                    tracing::error!("Error receiving frame: {:?}", e);
+                                    tracing::error!("{} Error receiving frame: {:?}", stream.stream_id, e);
                                 }
                                 break;
                             }
                         }
                     }
-                    tracing::info!("Closing stream {}", stream.stream_id);
+                    tracing::info!("{} Closing stream", stream.stream_id);
                 });
             }
         });
