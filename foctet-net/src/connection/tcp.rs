@@ -219,11 +219,13 @@ pub struct TcpConnection {
     pub state: ConnectionState,
     pub send_buffer_size: usize,
     pub receive_buffer_size: usize,
+    pub remote_address: SocketAddr,
 }
 
 impl TcpConnection {
     pub fn new(node_id: NodeId, connection: TlsStream<TcpStream>, config: &SocketConfig) -> Self {
         let connection_id = ConnectionId::new();
+        let remote_address = connection.get_ref().0.peer_addr().unwrap();
         let tls_tcp_stream = TlsTcpStream {
             stream: connection,
             node_id: node_id.clone(),
@@ -240,6 +242,7 @@ impl TcpConnection {
             state: ConnectionState::Connected,
             send_buffer_size: config.write_buffer_size(),
             receive_buffer_size: config.read_buffer_size(),
+            remote_address: remote_address,
         }
     }
     pub async fn get_stream(&mut self) -> Arc<Mutex<TlsTcpStream>> {
@@ -255,6 +258,9 @@ impl TcpConnection {
     }
     pub fn id(&self) -> ConnectionId {
         self.connection_id.clone()
+    }
+    pub fn remote_address(&self) -> SocketAddr {
+        self.remote_address
     }
 }
 
