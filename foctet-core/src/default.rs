@@ -45,7 +45,33 @@ pub const DEFAULT_SERVER_V6_ADDR: SocketAddr =
     SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEFAULT_SERVER_PORT);
 pub const DEFAULT_RELAY_SERVER_PORT: u16 = 4433;
 
+// The foctet user configuration directory structure
+/*
+.foctet/
+├── config.toml              # Main configuration file
+├── logs/                    # Log files directory
+│   ├── foctet.log           # Log file that can be rotated
+├── temp/                    # Temporary directory
+│   ├── uploads/             # Uploads directory
+│   └── downloads/           # Donwloads directory
+├── db/                      # Database directory
+│   └── foctet.db            # SQLite database file
+└── cache/                   # Cache directory
+    └── metadata_cache/      # Metadata cache directory
+        ├── file1.json       # Metadata cache file
+        └── file2.json       # Metadata cache file
+*/
+
+/// The default configuration directory name.
 pub const DEFAULT_CONFIG_DIR: &str = ".foctet";
+pub const DEFAULT_TEMP_DIR: &str = "temp";
+pub const DEFAULT_LOG_DIR: &str = "logs";
+pub const DEFAULT_LOG_FILE: &str = "foctet.log";
+pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
+pub const DEFAULT_DATABASE_DIR: &str = "db";
+pub const DEFAULT_DATABASE_FILE: &str = "foctet.db";
+pub const DEFAULT_CACHE_DIR: &str = "cache";
+pub const DEFAULT_METADATA_CACHE_DIR: &str = "metadata_cache";
 
 /// The default keypair (PKCS#8 document) file name. 
 /// The PKCS#8 document is a v2 `OneAsymmetricKey` with the public key,
