@@ -160,7 +160,8 @@ impl NetworkStream for TlsTcpStream {
     }
 
     async fn close(&mut self) -> Result<()> {
-        self.stream.get_mut().0.shutdown().await?;
+        self.stream.shutdown().await?;
+        //self.stream.get_mut().0.shutdown().await?;
         self.is_closed = true;
         Ok(())
     }
@@ -233,18 +234,19 @@ pub struct TcpSocket {
 }
 
 impl TcpSocket {
-    pub fn new(node_id: NodeId, config: SocketConfig) -> Self {
+    /// Creates a new TCP socket with given node_id and config
+    /// The socket acts as both a client and a server.
+    pub fn new(node_id: NodeId, config: SocketConfig) -> Result<Self> {
         let tls_connector = TlsConnector::from(Arc::new(config.tls_config.client_config.clone()));
         let tls_acceptor = TlsAcceptor::from(Arc::new(config.tls_config.server_config.clone()));
-        Self {
+        Ok(Self {
             node_id: node_id,
             config: config,
             tls_connector: tls_connector,
             tls_acceptor: tls_acceptor,
             connections: Arc::new(Mutex::new(HashMap::new())),
-        }
+        })
     }
-
     pub async fn connect(&mut self, server_addr: SocketAddr, server_name: &str) -> Result<Arc<Mutex<TcpConnection>>> {
         let name = rustls_pki_types::ServerName::try_from(server_name.to_string())?;
         let stream = TcpStream::connect(server_addr).await?;

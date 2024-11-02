@@ -304,6 +304,8 @@ pub struct QuicSocket {
 }
 
 impl QuicSocket {
+    /// Creates a new QUIC socket with given node_id and config.
+    /// The socket acts as both a client and a server.
     pub fn new(node_id: NodeId, config: SocketConfig) -> Result<Self> {
         let client_config: ClientConfig = endpoint::make_client_config(config.tls_config.client_config.clone())?;
         let server_config: ServerConfig = endpoint::make_server_config(config.tls_config.server_config.clone())?;
@@ -316,7 +318,7 @@ impl QuicSocket {
             connections: Arc::new(Mutex::new(HashMap::new())),
         })
     }
-    /// Creates a new QUIC client with the given socket options.
+    /// Creates a new QUIC client with given node_id and config.
     /// The socket acts as a client.
     pub fn new_client(node_id: NodeId, config: SocketConfig) -> Result<Self> {
         let client_config = endpoint::make_client_config(config.tls_config.client_config.clone())?;
