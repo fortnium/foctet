@@ -6,8 +6,16 @@ use crate::{hash::Blake3Hash, key::{self, UUID_V4_BYTES_LEN}, node::{ConnectionI
 /// The frame structure that is sent between the peers
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct Frame {
-    /// The header of the frame containing metadata for routing and identification
-    pub header: FrameHeader,
+    /// Indicates if this is the final frame in a sequence of frames for a particular operation.
+    pub fin: bool,
+    /// The type of the frame, used to distinguish different operations such as data transfer, connect, or disconnect.
+    pub frame_type: FrameType,
+    /// A unique identifier for the operation, allowing tracking of individual send/receive operations.
+    /// This ID can be used for error handling, retransmissions, and associating responses with requests.
+    pub operation_id: u64,
+    /// Flags providing additional information about the frame.
+    /// Each bit in this field can represent a specific flag, such as indicating fragmentation, priority, or compression.
+    pub flags: u8,
     /// The payload of the frame. This can be any data that needs to be sent between the peers.
     /// For file transfers, this will be the file binary data.
     /// For messages, this will be the message string. encoded in UTF-8.
@@ -15,22 +23,19 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// Create a new frame with the given header and payload.
-    pub fn new(header: FrameHeader, payload: Option<Payload>) -> Self {
-        Self { header, payload }
-    }
     /// Create a new frame with default empty header and no payload.
     pub fn empty() -> Self {
         Self {
-            header: FrameHeader {
-                frame_type: FrameType::Message,
-                node_id: NodeId::zero(),
-                stream_id: StreamId(0),
-                connection_id: None,
-                content_id: None,
-            },
+            fin: false,
+            frame_type: FrameType::Text,
+            operation_id: 0,
+            flags: 0,
             payload: None,
         }
+    }
+    /// Starts building a new `Frame` using `FrameBuilder`.
+    pub fn builder() -> FrameBuilder {
+        FrameBuilder::new()
     }
     /// Convert the frame to a byte array
     pub fn to_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
@@ -39,32 +44,6 @@ impl Frame {
     /// Convert a byte array to a frame
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::Error> {
         bincode::deserialize(bytes)
-    }
-    /// Create TransferStart frame
-    pub fn transfer_start(node_id: NodeId, stream_id: StreamId, connection_id: Option<ConnectionId>, content_id: Option<ContentId>) -> Self {
-        Self {
-            header: FrameHeader {
-                frame_type: FrameType::TransferStart,
-                node_id,
-                stream_id,
-                connection_id,
-                content_id,
-            },
-            payload: None,
-        }
-    }
-    /// Create EndOfTransfer frame
-    pub fn end_of_transfer(node_id: NodeId, stream_id: StreamId, connection_id: Option<ConnectionId>, content_id: Option<ContentId>) -> Self {
-        Self {
-            header: FrameHeader {
-                frame_type: FrameType::EndOfTransfer,
-                node_id,
-                stream_id,
-                connection_id,
-                content_id,
-            },
-            payload: None,
-        }
     }
     /// Get legnth of the frame
     pub fn len(&self) -> usize {
@@ -79,82 +58,67 @@ impl Frame {
     }
 }
 
-/// The frame header containing metadata for routing and identification
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct FrameHeader {
-    /// The type of the frame
-    pub frame_type: FrameType,
-    /// The node ID of the sender (source)
-    pub node_id: NodeId,
-    /// The stream ID of the frame
-    pub stream_id: StreamId,
-    /// The connection ID between the sender and the receiver
-    pub connection_id: Option<ConnectionId>,
-    /// The content ID of the payload
-    pub content_id: Option<ContentId>,
+pub struct FrameBuilder {
+   /// Indicates if this is the final frame in a sequence of frames for a particular operation.
+   fin: bool,
+   /// The type of the frame, used to distinguish different operations such as data transfer, connect, or disconnect.
+   frame_type: FrameType,
+   /// A unique identifier for the operation, allowing tracking of individual send/receive operations.
+   /// This ID can be used for error handling, retransmissions, and associating responses with requests.
+   operation_id: u64,
+   /// Flags providing additional information about the frame.
+   /// Each bit in this field can represent a specific flag, such as indicating fragmentation, priority, or compression.
+   flags: u8,
+   /// The payload of the frame. This can be any data that needs to be sent between the peers.
+   /// For file transfers, this will be the file binary data.
+   /// For messages, this will be the message string. encoded in UTF-8.
+   payload: Option<Payload>,
 }
 
-impl FrameHeader {
-    /// Starts building a new `FrameHeader` using `FrameHeaderBuilder`.
-    pub fn builder() -> FrameHeaderBuilder {
-        FrameHeaderBuilder::new()
-    }
-}
-
-pub struct FrameHeaderBuilder {
-    frame_type: FrameType,
-    node_id: NodeId,
-    stream_id: StreamId,
-    connection_id: Option<ConnectionId>,
-    content_id: Option<ContentId>,
-}
-
-impl FrameHeaderBuilder {
+impl FrameBuilder {
     /// Creates a new `FrameHeaderBuilder` with the required fields.
     pub fn new() -> Self {
         Self {
-            frame_type: FrameType::Message,
-            node_id: NodeId::zero(),
-            stream_id: StreamId(0),
-            connection_id: None,
-            content_id: None,
+            fin: false,
+            frame_type: FrameType::Text,
+            operation_id: 0,
+            flags: 0,
+            payload: None,
         }
+    }
+    /// Sets the fin flag.
+    pub fn with_fin(mut self, fin: bool) -> Self {
+        self.fin = fin;
+        self
     }
     /// Sets the frame type.
     pub fn with_frame_type(mut self, frame_type: FrameType) -> Self {
         self.frame_type = frame_type;
         self
     }
-    /// Sets the node ID.
-    pub fn with_node_id(mut self, node_id: NodeId) -> Self {
-        self.node_id = node_id;
+    /// Sets the operation ID.
+    pub fn with_operation_id(mut self, operation_id: u64) -> Self {
+        self.operation_id = operation_id;
         self
     }
-    /// Sets the stream ID.
-    pub fn with_stream_id(mut self, stream_id: StreamId) -> Self {
-        self.stream_id = stream_id;
+    /// Sets the flags.
+    pub fn with_flags(mut self, flags: u8) -> Self {
+        self.flags = flags;
         self
     }
-    /// Sets the connection ID.
-    pub fn with_connection_id(mut self, connection_id: ConnectionId) -> Self {
-        self.connection_id = Some(connection_id);
+    /// Sets the payload.
+    pub fn with_payload(mut self, payload: Payload) -> Self {
+        self.payload = Some(payload);
         self
     }
-
-    /// Sets the content ID.
-    pub fn with_content_id(mut self, content_id: ContentId) -> Self {
-        self.content_id = Some(content_id);
-        self
-    }
-
-    /// Builds the `FrameHeader`.
-    pub fn build(self) -> FrameHeader {
-        FrameHeader {
+    /// Builds the `Frame`.
+    pub fn build(self) -> Frame {
+        Frame {
+            fin: self.fin,
             frame_type: self.frame_type,
-            node_id: self.node_id,
-            stream_id: self.stream_id,
-            connection_id: self.connection_id,
-            content_id: self.content_id,
+            operation_id: self.operation_id,
+            flags: self.flags,
+            payload: self.payload,
         }
     }
 }
@@ -166,11 +130,12 @@ pub enum FrameType {
     Connected,
     Disconnect,
     Disconnected,
-    Message,
+    Text,
     DataTransfer,
     FileTransfer,
     TransferStart,
     EndOfTransfer,
+    ContentRequest,
 }
 
 /// Identifier for a stream within a particular connection
@@ -245,6 +210,8 @@ pub enum Payload {
     Text(String),
     FileMetadata(FileMetadata),
     Metadata(Metadata),
+    ConnectionInfo(ConnectionInfo),
+    ContentId(ContentId),
 }
 
 impl Payload {
@@ -262,7 +229,43 @@ impl Payload {
                 // Serialize the metadata to bytes and get the size
                 bincode::serialize(metadata).unwrap_or_default().len()
             },
+            Self::ConnectionInfo(info) => {
+                // Serialize the connection info to bytes and get the size
+                bincode::serialize(info).unwrap_or_default().len()
+            },
+            Self::ContentId(id) => {
+                // Serialize the content ID to bytes and get the size
+                bincode::serialize(id).unwrap_or_default().len()
+            },
         }
+    }
+    /// Create a new data chunk payload
+    pub fn data_chunk(data: Vec<u8>) -> Self {
+        Self::DataChunk(data)
+    }
+    /// Create a new file chunk payload
+    pub fn file_chunk(data: Vec<u8>) -> Self {
+        Self::FileChunk(data)
+    }
+    /// Create a new text payload
+    pub fn text(text: String) -> Self {
+        Self::Text(text)
+    }
+    /// Create a new file metadata payload
+    pub fn file_metadata(metadata: FileMetadata) -> Self {
+        Self::FileMetadata(metadata)
+    }
+    /// Create a new metadata payload
+    pub fn metadata(metadata: Metadata) -> Self {
+        Self::Metadata(metadata)
+    }
+    /// Create a new connection info payload
+    pub fn connection_info(info: ConnectionInfo) -> Self {
+        Self::ConnectionInfo(info)
+    }
+    /// Create a new content ID payload
+    pub fn content_id(id: ContentId) -> Self {
+        Self::ContentId(id)
     }
 }
 
@@ -289,4 +292,10 @@ pub struct FileMetadata {
     pub modified: UnixTimestamp,
     /// File accessed timestamp in Unix time
     pub accessed: UnixTimestamp,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct ConnectionInfo {
+    pub node_id: NodeId,
+    pub connection_id: Option<ConnectionId>,
 }
