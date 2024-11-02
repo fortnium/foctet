@@ -5,6 +5,13 @@ edition.workspace = true
 authors.workspace = true
 description = "Command-line interface for the Foctet protocol, providing tools for P2P communication and file transfer."
 
+[[bin]]
+name = "foctet"
+path = "src/main.rs"
+
 [dependencies]
 foctet = { path = "../foctet" }
+chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["cargo"] }
+indicatif = "0.16"
+inquire = "0.6"
