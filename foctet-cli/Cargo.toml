@@ -6,3 +6,5 @@ authors.workspace = true
 description = "Command-line interface for the Foctet protocol, providing tools for P2P communication and file transfer."
 
 [dependencies]
+foctet = { path = "../foctet" }
+clap = { version = "4.5", features = ["cargo"] }
