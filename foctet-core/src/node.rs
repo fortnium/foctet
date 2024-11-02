@@ -1,5 +1,7 @@
 use std::{collections::BTreeSet, net::SocketAddr};
 use serde::{Deserialize, Serialize};
+use base64::{engine::general_purpose::URL_SAFE, Engine};
+use anyhow::Result;
 use crate::key::{self, NodePublicKey, UUID_V4_BYTES_LEN};
 
 /// The identifier for a node in the foctet network.
@@ -60,10 +62,20 @@ impl NodeAddr {
             relay_addr: None,
         }
     }
-    
     /// Check if the node address is unspecified.
     pub fn is_unspecified(&self) -> bool {
         self.node_id.is_zero()
+    }
+    /// Converts the NodeAddr to a single string ID.
+    pub fn to_id(&self) -> Result<String> {
+        let serialized = bincode::serialize(self)?;
+        Ok(URL_SAFE.encode(&serialized))
+    }
+    /// Converts a string ID back into a NodeAddr.
+    pub fn from_id(id: &str) -> Result<Self> {
+        let decoded = URL_SAFE.decode(id)?;
+        let node_addr: Self = bincode::deserialize(&decoded)?;
+        Ok(node_addr)
     }
 }
 
@@ -161,5 +173,25 @@ impl NodeConnection {
             node_id,
             connection_id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, SocketAddrV4};
+
+    use super::*;
+
+    #[test]
+    fn test_node_addr() {
+        let node_id = NodeId::generate();
+        let node_addr = NodeAddr::new(node_id)
+            .with_socket_addr(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4432)));
+        println!("NodeAddr: {:?}", node_addr);
+        let id = node_addr.to_id().unwrap();
+        println!("NodeAddr ID: {}", id);
+        let node_addr2 = NodeAddr::from_id(&id).unwrap();
+        println!("NodeAddr2: {:?}", node_addr2);
+        assert_eq!(node_addr, node_addr2);
     }
 }
