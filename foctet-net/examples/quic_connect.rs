@@ -3,7 +3,7 @@ use foctet_core::{frame::Payload, node::NodeId};
 use foctet_net::connection::{quic::QuicSocket, NetworkStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::net::SocketAddr;
-use foctet_core::frame::{Frame, FrameHeader, FrameType};
+use foctet_core::frame::{Frame, FrameType};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -47,7 +47,6 @@ async fn main() -> Result<()> {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     // Parse command line arguments
-    // Parse command line arguments
     let args = Args::parse();
     let tls_config = if args.insecure {
         TlsConfig::new_insecure_config()?
@@ -70,20 +69,18 @@ async fn main() -> Result<()> {
                 // Stream
                 let stream = conn.open_stream().await?;
                 let mut stream = stream.lock().await;
-                //let node_id = NodeId::generate();
-                let frame_header = FrameHeader::builder()
-                    .with_frame_type(FrameType::Message)
-                    .with_node_id(node_id)
-                    .with_stream_id(stream.stream_id)
+                let frame: Frame = Frame::builder()
+                    .with_fin(true)
+                    .with_frame_type(FrameType::Text)
+                    .with_operation_id(stream.next_operation_id)
+                    .with_payload(Payload::text("Hello! from client.".to_string()))
                     .build();
-                let payload = Payload::Text("Hello! from client.".to_string());
-                let frame = Frame::new(frame_header, Some(payload));
                 tracing::info!("Sending a message...");
                 tracing::info!("Frame: {:?}", frame);
                 stream.send_frame(frame).await?;
                 tracing::info!("Message sent.");
                 // Wait for the server to respond
-                let frame = stream.receive_frame(None).await?;
+                let frame = stream.receive_frame().await?;
                 tracing::info!("Received a message.");
                 tracing::info!("Frame: {:?}", frame);
                 tracing::info!("closing stream...");
