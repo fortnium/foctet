@@ -59,7 +59,7 @@ fn main() {
                     tracing::info!("Configuration updated");
                 },
                 Err(e) => {
-                    eprintln!("Failed to update configuration: {}", e);
+                    tracing::error!("Failed to update configuration: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -70,26 +70,58 @@ fn main() {
                     tracing::info!("Configuration shown");
                 },
                 Err(e) => {
-                    eprintln!("Failed to show configuration: {}", e);
+                    tracing::error!("Failed to show configuration: {}", e);
                     std::process::exit(1);
                 }
             }
         },
         Some(AppCommands::Send) => {
             println!("Send command");
-            handler::send::handle(&matches);
+            match handler::send::handle(&matches) {
+                Ok(_) => {
+                    tracing::info!("File sent");
+                },
+                Err(e) => {
+                    tracing::error!("Failed to send file: {}", e);
+                    std::process::exit(1);
+                }
+            }
         },
         Some(AppCommands::Receive) => {
             println!("Receive command");
-            handler::receive::handle(&matches);
+            match handler::receive::handle(&matches) {
+                Ok(_) => {
+                    tracing::info!("File received");
+                },
+                Err(e) => {
+                    tracing::error!("Failed to receive file: {}", e);
+                    std::process::exit(1);
+                }
+            }
         },
         Some(AppCommands::Connect) => {
             println!("Connect command");
-            handler::connect::handle(&matches);
+            match handler::connect::handle(&matches) {
+                Ok(_) => {
+                    tracing::info!("Connection closed");
+                },
+                Err(e) => {
+                    tracing::error!("Failed to connect to server: {}", e);
+                    std::process::exit(1);
+                }
+            }
         },
         Some(AppCommands::Listen) => {
             println!("Listen command");
-            handler::listen::handle(&matches);
+            match handler::listen::handle(&matches) {
+                Ok(_) => {
+                    tracing::info!("Server stopped");
+                },
+                Err(e) => {
+                    tracing::error!("Failed to listen for incoming connections: {}", e);
+                    std::process::exit(1);
+                }
+            }
         },
         None => {
             println!("No command");
