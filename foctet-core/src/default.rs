@@ -43,14 +43,20 @@ pub const DEFAULT_SERVER_V4_ADDR: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), DEFAULT_SERVER_PORT);
 pub const DEFAULT_SERVER_V6_ADDR: SocketAddr =
     SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEFAULT_SERVER_PORT);
+pub const DEFAULT_RELAY_SERVER_HOST_ADDR: &str = "relay.foctet.net";
 pub const DEFAULT_RELAY_SERVER_PORT: u16 = 4433;
 
 // The foctet user configuration directory structure
 /*
-.foctet/
-├── config.toml              # Main configuration file
+$HOME/.foctet/
+├── foctet-config.toml              # Main configuration file
+├── keys/                    # Keys directory
+│   ├── id_ed25519.p8        # Default keypair file
+├── tls/                        # TLS certificate and key files
+│   ├── cert.chain.pem                # Self-signed or user-provided TLS certificate
+│   └── key.pem                 # Private key corresponding to the TLS certificate
 ├── logs/                    # Log files directory
-│   ├── foctet.log           # Log file that can be rotated
+│   ├── foctet-YYYY-MM-DD.log           # Log file that can be rotated
 ├── temp/                    # Temporary directory
 │   ├── uploads/             # Uploads directory
 │   └── downloads/           # Donwloads directory
@@ -64,14 +70,24 @@ pub const DEFAULT_RELAY_SERVER_PORT: u16 = 4433;
 
 /// The default configuration directory name.
 pub const DEFAULT_CONFIG_DIR: &str = ".foctet";
+pub const DEFAULT_KEYS_DIR: &str = "keys";
 pub const DEFAULT_TEMP_DIR: &str = "temp";
 pub const DEFAULT_LOG_DIR: &str = "logs";
 pub const DEFAULT_LOG_FILE: &str = "foctet.log";
-pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
+pub const DEFAULT_LOG_LEVEL: &str = "info";
+pub const DEFAULT_CONFIG_FILE: &str = "foctet-config.toml";
 pub const DEFAULT_DATABASE_DIR: &str = "db";
 pub const DEFAULT_DATABASE_FILE: &str = "foctet.db";
 pub const DEFAULT_CACHE_DIR: &str = "cache";
 pub const DEFAULT_METADATA_CACHE_DIR: &str = "metadata_cache";
+/// The default cache expiration time in seconds. (1 hour)
+pub const DEFAULT_CACHE_EXPIRATION: u64 = 3600;
+/// The default maximum cache size in bytes. (50MB)
+pub const DEFAULT_CACHE_MAX_SIZE: u64 = 50 * 1024 * 1024;
+pub const DEFAULT_OUTPUT_DIR: &str = "output";
+pub const DEFAULT_TLS_DIR: &str = "tls";
+pub const DEFAULT_CERT_FILE: &str = "cert.chain.pem";
+pub const DEFAULT_KEY_FILE: &str = "key.pem";
 
 /// The default keypair (PKCS#8 document) file name. 
 /// The PKCS#8 document is a v2 `OneAsymmetricKey` with the public key,

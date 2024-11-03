@@ -1,0 +1,92 @@
+# foctet configuration file
+# This file defines the global settings for foctet, including network, timeout, and logging configurations.
+
+# Node configuration
+[node]
+# The unique identifier for the node, typically generated automatically if not provided
+# Example: "c94b8f8e-a614-4c1b-9a4e-8e7b1740e2f5"
+node_id = "" 
+# A ED25519 key pair. This is a wrapper around bytes of a key pair. (PKCS#8 document)
+# Example: "/home/user/.foctet/keys/id_ed25519.p8"
+key_pair_path = ""
+
+# TLS configuration
+[tls]
+# Path to the certificate file for secure connections (PEM or DER format)
+# Example: "/path/to/cert.pem"
+cert_path = ""
+
+# Path to the private key file for secure connections (PEM or DER format)
+# Example: "/path/to/key.pem"
+key_path = ""
+
+# Network configuration
+[network]
+# The list of socket addresses to bind to for incoming connections
+# Example: ["0.0.0.0:4432", "[::]:4432"]
+bind_addr = ["0.0.0.0:4432", "[::]:4432"]
+
+# Address of the relay server to use if direct connections are not possible
+# Example: "relay.foctet.net:4433"
+relay_addr = ""
+
+# Timeout and buffer size settings
+[timeout]
+# Timeout duration for connection attempts (in seconds)
+# Example: 10
+conn_timeout = 10
+
+# Timeout duration for reading data from a stream (in seconds)
+# Example: 10
+read_timeout = 10
+
+# Timeout duration for writing data to a stream (in seconds)
+# Example: 10
+write_timeout = 10
+
+# Buffer sizes for reading and writing data (in bytes)
+[buffer]
+# Size of the read buffer (in bytes)
+# Example: 8192
+read_buffer_size = 8192
+
+# Size of the write buffer (in bytes)
+# Example: 8192
+write_buffer_size = 8192
+
+# Logging configuration
+[log]
+# Log level for application output
+# Levels: "error", "warn", "info", "debug", "trace"
+# Example: "info"
+log_level = "info"
+
+# Paths for various directories
+[path]
+# Directory to store temporary files, including uploads and downloads
+# Example: "/home/user/.foctet/temp"
+temp_dir = ""
+
+# Directory to store application logs
+# Example: "/home/user/.foctet/logs"
+log_dir = ""
+
+# Directory to store any application output files
+# Example: "/home/user/.foctet/output"
+output_dir = ""
+
+# Directory to store metadata cache files
+# Example: "/home/user/.foctet/cache"
+cache_dir = ""
+
+# Database configuration
+[database]
+# Path to the SQLite database file
+# Example: "/home/user/.foctet/db/foctet.db"
+db_path = ""
+
+# Cache configuration
+[cache]
+metadata_cache_dir = ""
+expiration_seconds = 3600  # Cache expiration time in seconds (1 hour)
+max_size_bytes = 52428800  # Maximum cache size in bytes (50 MB)

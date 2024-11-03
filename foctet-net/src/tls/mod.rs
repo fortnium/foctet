@@ -11,15 +11,28 @@ use std::path::Path;
 use anyhow::Result;
 
 /// Generate a self-signed certificate and private key
-pub fn generate_self_signed_pair(
+/// Returns a tuple of certificate chain and private key in DER format
+pub fn generate_self_signed_pair_der(
+    subject_alt_names: Vec<String>
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
     let cert_chain = vec![CertificateDer::from(cert.cert)];
     Ok((cert_chain, key))
 }
 
-/// Load or generate certificate and private key
+/// Generate a self-signed certificate and private key
+/// Returns a tuple of certificate chain and private key in PEM format
+pub fn generate_self_signed_pair_pem(
+    subject_alt_names: Vec<String>
+) -> Result<(Vec<String>, String)> {
+    let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
+    let key = cert.key_pair.serialize_pem();
+    let cert_chain = vec![cert.cert.pem()];
+    Ok((cert_chain, key))
+}
+
+/// Load certificate and private key
 pub fn load_cert(
     cert_path: &Path,
     key_path: &Path,
@@ -55,7 +68,7 @@ impl TlsConfig {
         })
     }
 
-    /// Create a new TLS configuration with system certificates
+    /// Create a new TLS configuration with self-signed certificates
     pub fn with_self_signed_certs() -> Result<Self> {
         // ClientConfig
         let native_certs = cert::get_native_certs()?;
@@ -63,7 +76,7 @@ impl TlsConfig {
             .with_root_certificates(native_certs)
             .with_no_client_auth();
         // ServerConfig
-        let (certs, key) = generate_self_signed_pair()?;
+        let (certs, key) = generate_self_signed_pair_der(vec!["localhost".into()])?;
         let rustls_server_config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(certs, key)?;
@@ -80,7 +93,7 @@ impl TlsConfig {
             .with_root_certificates(native_certs)
             .with_no_client_auth();
         // ServerConfig
-        let (certs, key) = generate_self_signed_pair()?;
+        let (certs, key) = generate_self_signed_pair_der(vec!["localhost".into()])?;
         let rustls_server_config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(certs, key)?;
@@ -97,7 +110,7 @@ impl TlsConfig {
             .with_custom_certificate_verifier(SkipServerVerification::new())
             .with_no_client_auth();
         // ServerConfig
-        let (certs, key) = generate_self_signed_pair()?;
+        let (certs, key) = generate_self_signed_pair_der(vec!["localhost".into()])?;
         let rustls_server_config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(certs, key)?;
@@ -105,5 +118,47 @@ impl TlsConfig {
             client_config: rustls_client_config,
             server_config: rustls_server_config,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_self_signed_pair_der() {
+        let (cert_chain, key) = generate_self_signed_pair_der(vec!["localhost".into()]).unwrap();
+        let rustls_server_config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, key);
+        match rustls_server_config {
+            Ok(_) => {}
+            Err(e) => {
+                panic!("Failed to create ServerConfig: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_self_signed_pair_pem() {
+        let (cert_chain, key) = generate_self_signed_pair_pem(vec!["localhost".into()]).unwrap();
+        // Save to file
+        let cert_path = Path::new("cert.pem");
+        let key_path = Path::new("key.pem");
+        std::fs::write(cert_path, cert_chain.join("\n")).unwrap();
+        std::fs::write(key_path, key).unwrap();
+        // Load from file
+        let (cert_chain, key) = load_cert(cert_path, key_path).unwrap();
+        let rustls_server_config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, key);
+        match rustls_server_config {
+            Ok(_) => {}
+            Err(e) => {
+                panic!("Failed to create ServerConfig: {}", e);
+            }
+        }
+        std::fs::remove_file(cert_path).unwrap();
+        std::fs::remove_file(key_path).unwrap();
     }
 }

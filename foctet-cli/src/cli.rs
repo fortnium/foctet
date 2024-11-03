@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use clap::{crate_description, crate_name, crate_version, value_parser};
-use clap::{Arg, ArgMatches, Command};
+use clap::{crate_description, crate_version, value_parser};
+use clap::{Arg, Command};
 use crate::app::{CRATE_BIN_NAME, CRATE_REPOSITORY};
 
 pub fn build_cli() -> Command {
@@ -15,8 +15,8 @@ pub fn build_cli() -> Command {
             .about("Set global configuration")
             .arg(Arg::new("node-id")
                 .help("Generate a new node ID")
+                .long("node-id")
                 .num_args(0)
-                .required(false)
             )
             .arg(Arg::new("cert")
                 .help("Path to the certificate file (PEM or DER format)")
@@ -82,7 +82,7 @@ pub fn build_cli() -> Command {
                 .help("Log level")
                 .long("log-level")
                 .value_name("level")
-                .value_parser(value_parser!(u64))
+                .value_parser(value_parser!(String))
             )
         )
         .subcommand(Command::new("send")

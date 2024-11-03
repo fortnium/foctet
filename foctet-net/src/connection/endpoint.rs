@@ -124,7 +124,7 @@ fn configure_server(cert_path: &Path, key_path: &Path) -> Result<ServerConfig> {
 
 /// Returns default server configuration along with its certificate.
 fn configure_self_signed_server() -> Result<ServerConfig> {
-    let (cert_chain, key) = crate::tls::generate_self_signed_pair()?;
+    let (cert_chain, key) = crate::tls::generate_self_signed_pair_der(vec!["localhost".into()])?;
 
     let mut server_config = ServerConfig::with_single_cert(cert_chain, key)?;
     let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();

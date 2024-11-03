@@ -42,6 +42,7 @@ pub fn show_app_desc() {
     println!();
 }
 
+#[allow(unused)]
 pub fn show_banner_with_starttime() {
     println!(
         "{} v{} {}",
@@ -55,12 +56,14 @@ pub fn show_banner_with_starttime() {
     println!();
 }
 
+#[allow(unused)]
 pub fn exit_with_error_message(message: &str) {
     println!();
     println!("Error: {}", message);
     std::process::exit(1);
 }
 
+#[allow(unused)]
 pub fn show_error_with_help(message: &str) {
     println!();
     println!("Error: {}", message);

@@ -1,5 +1,5 @@
 use clap::ArgMatches;
 
-pub fn handle(args: &ArgMatches) {
+pub fn handle(_args: &ArgMatches) {
 
 }

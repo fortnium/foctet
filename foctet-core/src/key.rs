@@ -1,9 +1,9 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::sync::OnceLock;
 use std::time::Duration;
-
+use base64::{engine::general_purpose::URL_SAFE, Engine};
 use uuid::Uuid;
 use ring::pkcs8::Document;
 use ring::rand::SystemRandom;
@@ -142,6 +142,15 @@ impl NodePublicKey {
     pub fn len(&self) -> usize {
         self.public_key.len()
     }
+    /// Convert the `NodePublicKey` to a base64 encoded string.
+    pub fn to_base64(&self) -> String {
+        URL_SAFE.encode(&self.public_key)
+    }
+    /// Create a new `NodePublicKey` from a base64 encoded string.
+    pub fn from_base64(encoded: &str) -> Result<Self> {
+        let decoded = URL_SAFE.decode(encoded)?;
+        Ok(NodePublicKey::from_bytes(&decoded))
+    }
 }
 
 /// A ED25519 key pair. This is a wrapper around bytes of a key pair. (PKCS#8 document)
@@ -187,12 +196,16 @@ impl NodeKeyPair {
 
     /// Saves the key pair to a file.
     pub fn save_to_file(&self, path: &Path) -> Result<()> {
+        if !path.exists() {
+            fs::create_dir_all(path.parent().unwrap()).map_err(|e| anyhow!(e))?;
+        }
         fs::write(path, &self.key_pair).map_err(|e| anyhow!(e))
     }
 
     /// Saves the key pair to a default file.
     pub fn save_to_default_file(&self) -> Result<()> {
-        let path = crate::fs::get_user_file_path(crate::default::DEFAULT_KEYPAIR_FILE).ok_or_else(|| anyhow!("failed to get user file path"))?;
+        let relative_path: PathBuf = PathBuf::from(crate::default::DEFAULT_KEYS_DIR).join(crate::default::DEFAULT_KEYPAIR_FILE);
+        let path = crate::fs::get_user_data_path(&relative_path).ok_or_else(|| anyhow!("failed to get user file path"))?;
         self.save_to_file(&path)
     }
 
@@ -204,7 +217,8 @@ impl NodeKeyPair {
 
     /// Loads a key pair from a default file.
     pub fn load_from_default_file() -> Result<Self> {
-        let path = crate::fs::get_user_file_path(crate::default::DEFAULT_KEYPAIR_FILE).ok_or_else(|| anyhow!("failed to get user file path"))?;
+        let relative_path: PathBuf = PathBuf::from(crate::default::DEFAULT_KEYS_DIR).join(crate::default::DEFAULT_KEYPAIR_FILE);
+        let path = crate::fs::get_user_data_path(&relative_path).ok_or_else(|| anyhow!("failed to get user file path"))?;
         NodeKeyPair::load_from_file(&path)
     }
 
@@ -302,5 +316,30 @@ mod tests {
         let loaded_key_pair = NodeKeyPair::load_from_file(path).unwrap();
         assert_eq!(loaded_key_pair.as_bytes(), key_pair.as_bytes());
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_defaul_key_pair() {
+        let key_pair = NodeKeyPair::generate();
+        key_pair.save_to_default_file().unwrap();
+        let loaded_key_pair = NodeKeyPair::load_from_default_file().unwrap();
+        assert_eq!(loaded_key_pair.as_bytes(), key_pair.as_bytes());
+        let path = Path::new("test_key_pair");
+        key_pair.save_to_file(path).unwrap();
+        let loaded_key_pair = NodeKeyPair::load_from_file(path).unwrap();
+        assert_eq!(loaded_key_pair.as_bytes(), key_pair.as_bytes());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_base64_key() {
+        let key_pair = NodeKeyPair::generate();
+        let public_key = key_pair.public_key();
+        let encoded = public_key.to_base64();
+        let decoded_public_key = NodePublicKey::from_base64(&encoded).unwrap();
+        println!("Public key: {:?}", public_key.as_bytes());
+        println!("Encoded: {}", encoded);
+        println!("Decoded: {:?}", decoded_public_key.as_bytes());
+        assert_eq!(decoded_public_key.as_bytes(), public_key.as_bytes());
     }
 }

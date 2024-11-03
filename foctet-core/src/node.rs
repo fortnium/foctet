@@ -66,14 +66,14 @@ impl NodeAddr {
     pub fn is_unspecified(&self) -> bool {
         self.node_id.is_zero()
     }
-    /// Converts the NodeAddr to a single string ID.
-    pub fn to_id(&self) -> Result<String> {
+    /// Converts the NodeAddr to a single base64 string.
+    pub fn to_base64(&self) -> Result<String> {
         let serialized = bincode::serialize(self)?;
         Ok(URL_SAFE.encode(&serialized))
     }
-    /// Converts a string ID back into a NodeAddr.
-    pub fn from_id(id: &str) -> Result<Self> {
-        let decoded = URL_SAFE.decode(id)?;
+    /// Converts a base64 string back into a NodeAddr.
+    pub fn from_base64(encoded: &str) -> Result<Self> {
+        let decoded = URL_SAFE.decode(encoded)?;
         let node_addr: Self = bincode::deserialize(&decoded)?;
         Ok(node_addr)
     }
@@ -188,9 +188,9 @@ mod tests {
         let node_addr = NodeAddr::new(node_id)
             .with_socket_addr(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4432)));
         println!("NodeAddr: {:?}", node_addr);
-        let id = node_addr.to_id().unwrap();
+        let id = node_addr.to_base64().unwrap();
         println!("NodeAddr ID: {}", id);
-        let node_addr2 = NodeAddr::from_id(&id).unwrap();
+        let node_addr2 = NodeAddr::from_base64(&id).unwrap();
         println!("NodeAddr2: {:?}", node_addr2);
         assert_eq!(node_addr, node_addr2);
     }

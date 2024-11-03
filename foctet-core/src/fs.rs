@@ -56,8 +56,8 @@ pub fn get_file_metadata(path: &Path, is_compressed_dir: bool) -> Result<FileMet
     })
 }
 
-/// Get config directory path
-pub fn get_config_dir_path() -> Option<PathBuf> {
+/// Get user config directory path
+pub fn get_user_data_dir_path() -> Option<PathBuf> {
     match home::home_dir() {
         Some(mut path) => {
             path.push(DEFAULT_CONFIG_DIR);
@@ -76,11 +76,14 @@ pub fn get_config_dir_path() -> Option<PathBuf> {
     }
 }
 
-/// Get user file path
-pub fn get_user_file_path(file_name: &str) -> Option<PathBuf> {
-    match get_config_dir_path() {
+/// Get user data file/directory path
+/// The 'relative_path' should be a relative path to the user data directory.
+/// Returns the full path if the user data directory exists, otherwise None.
+/// e.g. get_user_data_path("logs/foctet.log") -> Some("/home/user/.foctet/logs/foctet.log")
+pub fn get_user_data_path(relative_path: &PathBuf) -> Option<PathBuf> {
+    match get_user_data_dir_path() {
         Some(mut path) => {
-            path.push(file_name);
+            path.push(relative_path);
             Some(path)
         }
         None => None,
