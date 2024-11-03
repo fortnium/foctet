@@ -64,6 +64,17 @@ fn main() {
                 }
             }
         },
+        Some(AppCommands::Show) => {
+            match handler::show::handle(&matches) {
+                Ok(_) => {
+                    tracing::info!("Configuration shown");
+                },
+                Err(e) => {
+                    eprintln!("Failed to show configuration: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        },
         Some(AppCommands::Send) => {
             println!("Send command");
             handler::send::handle(&matches);

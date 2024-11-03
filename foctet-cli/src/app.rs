@@ -8,6 +8,7 @@ pub const CRATE_REPOSITORY: &str = "https://github.com/shellrow/foctet";
 
 pub enum AppCommands {
     Config,
+    Show,
     Send,
     Receive,
     Connect,
@@ -18,6 +19,7 @@ impl AppCommands {
     pub fn from_str(s: &str) -> Option<AppCommands> {
         match s {
             "config" => Some(AppCommands::Config),
+            "show" => Some(AppCommands::Show),
             "send" => Some(AppCommands::Send),
             "receive" => Some(AppCommands::Receive),
             "connect" => Some(AppCommands::Connect),

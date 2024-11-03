@@ -74,6 +74,10 @@ impl FoctetConfig {
         self.save(&config_path)?;
         Ok(())
     }
+    pub fn to_string(&self) -> Result<String> {
+        let config_str = toml::to_string(self)?;
+        Ok(config_str)
+    }
 }
 
 pub fn load_config() -> Result<()> {
