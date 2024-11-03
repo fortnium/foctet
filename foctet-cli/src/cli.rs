@@ -44,7 +44,6 @@ pub fn build_cli() -> Command {
                 .value_name("named-socket-addr")
                 .value_parser(value_parser!(NamedSocketAddr))
             )
-            
             .arg(Arg::new("conn-timeout")
                 .help("Connection timeout in seconds")
                 .long("conn-timeout")
