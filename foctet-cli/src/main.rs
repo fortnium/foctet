@@ -26,6 +26,7 @@ fn main() {
         app::show_app_desc();
         std::process::exit(0);
     }
+    // Check if the configuration file exists, if not generate a default one
     if !config_file_exists() {
         match generate_default_config() {
             Ok(config_path) => {
@@ -37,14 +38,31 @@ fn main() {
             }
         }
     }
+    // Load the configuration file
+    match config::load_config() {
+        Ok(_) => {
+            tracing::info!("Configuration file loaded");
+        },
+        Err(e) => {
+            eprintln!("Failed to load configuration file: {}", e);
+            std::process::exit(1);
+        }
+    }
     let cli_command = cli::build_cli();
     let matches = cli_command.get_matches();
     let subcommand_name = matches.subcommand_name().unwrap_or("");
     let app_command = AppCommands::from_str(subcommand_name);
     match app_command {
         Some(AppCommands::Config) => {
-            println!("Config command");
-            handler::config::handle(&matches);
+            match handler::config::handle(&matches) {
+                Ok(_) => {
+                    tracing::info!("Configuration updated");
+                },
+                Err(e) => {
+                    eprintln!("Failed to update configuration: {}", e);
+                    std::process::exit(1);
+                }
+            }
         },
         Some(AppCommands::Send) => {
             println!("Send command");

@@ -203,10 +203,13 @@ impl NodeKeyPair {
     }
 
     /// Saves the key pair to a default file.
-    pub fn save_to_default_file(&self) -> Result<()> {
+    pub fn save_to_default_file(&self) -> Result<PathBuf> {
         let relative_path: PathBuf = PathBuf::from(crate::default::DEFAULT_KEYS_DIR).join(crate::default::DEFAULT_KEYPAIR_FILE);
         let path = crate::fs::get_user_data_path(&relative_path).ok_or_else(|| anyhow!("failed to get user file path"))?;
-        self.save_to_file(&path)
+        match self.save_to_file(&path) {
+            Ok(_) => Ok(path),
+            Err(e) => Err(e)
+        }
     }
 
     /// Loads a key pair from a file.

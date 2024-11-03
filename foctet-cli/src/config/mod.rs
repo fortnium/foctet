@@ -8,7 +8,7 @@ pub mod path;
 pub mod timeout;
 pub mod tls;
 
-use std::path::{Path, PathBuf};
+use std::{path::{Path, PathBuf}, sync::{Mutex, MutexGuard, OnceLock}};
 
 use buffer::BufferConfig;
 use cache::CacheConfig;
@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use timeout::TimeoutConfig;
 use tls::TlsConfig;
 use anyhow::Result;
+
+pub static CONFIG: OnceLock<Mutex<FoctetConfig>> = OnceLock::new();
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FoctetConfig {
@@ -60,6 +62,60 @@ impl FoctetConfig {
         let config_str = toml::to_string(self)?;
         std::fs::write(file_path, config_str)?;
         Ok(())
+    }
+    pub fn save_to_default_file(&self) -> Result<()> {
+        let config_path = match foctet::core::fs::get_user_data_dir_path() {
+            Some(user_data_dir) => user_data_dir.join(DEFAULT_CONFIG_FILE),
+            None => {
+                tracing::error!("Failed to get user data directory path");
+                anyhow::bail!("Failed to get user data directory path");
+            }
+        };
+        self.save(&config_path)?;
+        Ok(())
+    }
+}
+
+pub fn load_config() -> Result<()> {
+    let config_path = match foctet::core::fs::get_user_data_dir_path() {
+        Some(user_data_dir) => user_data_dir.join(DEFAULT_CONFIG_FILE),
+        None => {
+            tracing::error!("Failed to get user data directory path");
+            anyhow::bail!("Failed to get user data directory path");
+        }
+    };
+    let config = FoctetConfig::from_file(&config_path)?;
+    match CONFIG.set(Mutex::new(config)) {
+        Ok(_) => {
+            tracing::debug!("Config loaded successfully");
+        }
+        Err(_) => {
+            tracing::error!("Failed to load config");
+            anyhow::bail!("Failed to load config");
+        }
+    }
+    Ok(())
+}
+
+pub fn get_config() -> Result<MutexGuard<'static, FoctetConfig>> {
+    let config_path = match foctet::core::fs::get_user_data_dir_path() {
+        Some(user_data_dir) => user_data_dir.join(DEFAULT_CONFIG_FILE),
+        None => {
+            tracing::error!("Failed to get user data directory path");
+            anyhow::bail!("Failed to get user data directory path");
+        }
+    };
+    let config = CONFIG.get_or_init(|| {
+        tracing::debug!("Config not loaded, loading config");        
+        let config = FoctetConfig::from_file(&config_path).unwrap();
+        Mutex::new(config)
+    });
+    match config.try_lock() {
+        Ok(guard) => Ok(guard),
+        Err(_) => {
+            tracing::error!("Failed to get config lock");
+            anyhow::bail!("Failed to get config lock");
+        }
     }
 }
 
