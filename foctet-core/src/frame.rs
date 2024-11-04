@@ -1,7 +1,7 @@
 use std::fmt;
 
 use serde::{Serialize, Deserialize};
-use crate::{hash::Blake3Hash, key::{self, UUID_V4_BYTES_LEN}, node::{ConnectionId, NodeId}, time::UnixTimestamp};
+use crate::{content::ContentId, hash::Blake3Hash, node::{ConnectionId, NodeId}, time::UnixTimestamp};
 
 /// The frame structure that is sent between the peers
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
@@ -167,34 +167,6 @@ impl StreamId {
 impl fmt::Display for StreamId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "StreamId({})", self.0)
-    }
-}
-
-/// The content ID for a payload
-/// 128-bit UUID (Universally Unique Identifier) v4 is used.
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct ContentId([u8; UUID_V4_BYTES_LEN]);
-
-impl ContentId {
-    /// Create a new connection ID with the given string.
-    pub fn new() -> Self {
-        Self(key::generate_uuid_v4_bytes())
-    }
-    /// Create an zero connection ID.
-    pub fn zero() -> Self {
-        Self([0; UUID_V4_BYTES_LEN])
-    }
-    /// Get the connection ID as a string slice.
-    pub fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.0).unwrap_or_default()
-    }
-    /// Return the hexadecimal representation of the content ID.
-    pub fn to_hex(&self) -> String {
-        hex::encode(&self.0)
-    }
-    /// Check if the connection ID is empty.
-    pub fn is_zero(&self) -> bool {
-        self.0.iter().all(|&x| x == 0)
     }
 }
 

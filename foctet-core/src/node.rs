@@ -66,16 +66,16 @@ impl NodeAddr {
     pub fn is_unspecified(&self) -> bool {
         self.node_id.is_zero()
     }
-    /// Converts the NodeAddr to a single base64 string.
-    pub fn to_base64(&self) -> Result<String> {
-        let serialized = bincode::serialize(self)?;
-        Ok(URL_SAFE.encode(&serialized))
-    }
-    /// Converts a base64 string back into a NodeAddr.
+    /// Converts a base64 string into a NodeAddr.
     pub fn from_base64(encoded: &str) -> Result<Self> {
         let decoded = URL_SAFE.decode(encoded)?;
         let node_addr: Self = bincode::deserialize(&decoded)?;
         Ok(node_addr)
+    }
+    /// Converts the NodeAddr to a single base64 string.
+    pub fn to_base64(&self) -> Result<String> {
+        let serialized = bincode::serialize(self)?;
+        Ok(URL_SAFE.encode(&serialized))
     }
 }
 

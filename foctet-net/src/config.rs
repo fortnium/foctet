@@ -1,3 +1,4 @@
+use crate::socket::SocketType;
 use crate::tls::TlsConfig;
 use foctet_core::default::{
     DEFAULT_BIND_V4_ADDR, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_MAX_RETRIES, DEFAULT_RECEIVE_TIMEOUT,
@@ -12,23 +13,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 use anyhow::Result;
 use anyhow::anyhow;
-
-/// The type of socket and transport protocol.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SocketType {
-    /// QUIC socket (default)
-    Quic,
-    /// TCP socket
-    Tcp,
-    /// Both QUIC and TCP
-    Both,
-}
-
-impl Default for SocketType {
-    fn default() -> Self {
-        SocketType::Both
-    }
-}
 
 /// The configuration for the socket.
 #[derive(Debug, Clone)]
