@@ -1,10 +1,10 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 use foctet_core::error::{ConnectionError, StreamError};
 use foctet_core::frame::{Frame, FrameType, Payload, StreamId};
 use foctet_core::node::{ConnectionId, NodeId};
 use foctet_core::state::ConnectionState;
 use futures::sink::SinkExt;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
@@ -12,7 +12,7 @@ use quinn::{ClientConfig, Connection, Endpoint, RecvStream, SendStream, ServerCo
 use anyhow::Result;
 use anyhow::anyhow;
 use crate::config::SocketConfig;
-use super::{endpoint, NetworkStream};
+use super::{endpoint, FoctetStream};
 
 pub struct QuicStream {
     pub send_stream: SendStream,
@@ -24,9 +24,16 @@ pub struct QuicStream {
     pub receive_buffer_size: usize,
     pub is_closed: bool,
     pub next_operation_id: u64,
+    pub remote_address: SocketAddr,
 }
 
-impl NetworkStream for QuicStream {
+impl FoctetStream for QuicStream {
+    fn connection_id(&self) -> ConnectionId {
+        self.connection_id.clone()
+    }
+    fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
     async fn send_data(&mut self, data: &[u8]) -> Result<()> {
         let mut framed_writer = FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let mut offset = 0;
@@ -168,6 +175,10 @@ impl NetworkStream for QuicStream {
     fn is_closed(&self) -> bool {
         self.is_closed
     }
+
+    fn remote_address(&self) -> SocketAddr {
+        self.remote_address
+    }
 }
 
 pub struct QuicConnection {
@@ -175,8 +186,6 @@ pub struct QuicConnection {
     pub connection_id: ConnectionId,
     /// The QUIC connection
     pub connection: Connection,
-    /// The streams of the QUIC connection
-    pub streams: Arc<Mutex<HashMap<StreamId, Arc<Mutex<QuicStream>>>>>,
     pub state: ConnectionState,
     pub send_buffer_size: usize,
     pub receive_buffer_size: usize,
@@ -189,7 +198,6 @@ impl QuicConnection {
             node_id: node_id,
             connection_id: ConnectionId::new(),
             connection: connection,
-            streams: Arc::new(Mutex::new(HashMap::new())),
             state: ConnectionState::Connected,
             send_buffer_size: config.write_buffer_size(),
             receive_buffer_size: config.read_buffer_size(),
@@ -197,9 +205,9 @@ impl QuicConnection {
         }
     }
 
-    pub async fn open_stream(&mut self) -> Result<Arc<Mutex<QuicStream>>> {
+    pub async fn open_stream(&mut self) -> Result<QuicStream> {
         let (send_stream, recv_stream) = self.connection.open_bi().await?;
-        let quic_stream = Arc::new(Mutex::new(QuicStream {
+        let quic_stream = QuicStream {
             send_stream: send_stream,
             recv_stream: recv_stream,
             node_id: self.node_id.clone(),
@@ -209,15 +217,14 @@ impl QuicConnection {
             receive_buffer_size: self.receive_buffer_size,
             is_closed: false,
             next_operation_id: 0,
-        }));
-        let mut streams = self.streams.lock().await;
-        streams.insert(self.next_stream_id, Arc::clone(&quic_stream));
+            remote_address: self.remote_address(),
+        };
         tracing::info!("Opened bi-directional stream with ID: {}", self.next_stream_id);
         self.next_stream_id.increment();
         Ok(quic_stream)
     }
 
-    pub async fn accept_stream(&mut self) -> Result<Arc<Mutex<QuicStream>>> {
+    pub async fn accept_stream(&mut self) -> Result<QuicStream> {
         let (send_stream, recv_stream) = match self.connection.accept_bi().await {
             Ok(streams) => streams,
             Err(e) => {
@@ -236,7 +243,7 @@ impl QuicConnection {
                 }
             }
         };
-        let quic_stream = Arc::new(Mutex::new(QuicStream {
+        let quic_stream = QuicStream {
             send_stream: send_stream,
             recv_stream: recv_stream,
             node_id: self.node_id.clone(),
@@ -246,43 +253,15 @@ impl QuicConnection {
             receive_buffer_size: self.receive_buffer_size,
             is_closed: false,
             next_operation_id: 0,
-        }));
-        let mut streams = self.streams.lock().await;
-        streams.insert(self.next_stream_id, Arc::clone(&quic_stream));
+            remote_address: self.remote_address(),
+        };
         tracing::info!("Accepted bi-directional stream with ID: {}", self.next_stream_id);
         self.next_stream_id.increment();
         Ok(quic_stream)
     }
 
-    pub async fn get_stream(&mut self, stream_id: StreamId) -> Option<Arc<Mutex<QuicStream>>> {
-        let streams = self.streams.lock().await;
-        streams.get(&stream_id).cloned()
-    }
-
-    pub async fn close_stream(&mut self, stream_id: StreamId) -> Result<()> {
-        let mut streams = self.streams.lock().await;
-        if let Some(stream) = streams.remove(&stream_id) {
-            let mut stream = stream.lock().await;
-            if stream.is_closed {
-                return Ok(());
-            } else {
-                stream.close().await?;
-            }
-        }
-        Ok(())
-    }
     /// Close the QUIC connection
-    /// This will close all streams associated with the connection
     pub async fn close(&mut self) -> Result<()> {
-        let streams = self.streams.lock().await;
-        // collect all stream IDs
-        let stream_ids: Vec<StreamId> = streams.keys().cloned().collect();
-        // drop the streams lock
-        drop(streams);
-        // close all streams
-        for stream_id in stream_ids {
-            self.close_stream(stream_id).await?;
-        }
         // close the connection
         self.connection.close(0u32.into(), b"");
         self.state = ConnectionState::Disconnected;
@@ -300,7 +279,6 @@ pub struct QuicSocket {
     pub node_id: NodeId,
     pub config: SocketConfig,
     pub endpoint: Endpoint,
-    pub connections: Arc<Mutex<HashMap<ConnectionId, Arc<Mutex<QuicConnection>>>>>,
 }
 
 impl QuicSocket {
@@ -315,7 +293,6 @@ impl QuicSocket {
             node_id: node_id,
             config: config,
             endpoint: endpoint,
-            connections: Arc::new(Mutex::new(HashMap::new())),
         })
     }
     /// Creates a new QUIC client with given node_id and config.
@@ -328,59 +305,25 @@ impl QuicSocket {
             node_id: node_id,
             config: config,
             endpoint: endpoint,
-            connections: Arc::new(Mutex::new(HashMap::new())),
         })
     }
-    pub async fn connect(&mut self, server_addr: SocketAddr, server_name: &str) -> Result<Arc<Mutex<QuicConnection>>> {
+    pub async fn connect(&mut self, server_addr: SocketAddr, server_name: &str) -> Result<QuicConnection> {
         let connection = self.endpoint.connect(server_addr, server_name)?.await?;
         let quic_connection = QuicConnection::new(self.node_id.clone(), connection, &self.config);
-        let id = quic_connection.id();
-        let conn: Arc<Mutex<QuicConnection>> = Arc::new(Mutex::new(quic_connection));
-        let mut connections = self.connections.lock().await;
-        connections.insert(id.clone(), Arc::clone(&conn));
-        Ok(conn)
+        Ok(quic_connection)
     }
 
-    pub async fn listen(&mut self, sender: mpsc::Sender<Arc<Mutex<QuicConnection>>>) -> Result<()> {
+    pub async fn listen(&mut self, sender: mpsc::Sender<QuicConnection>) -> Result<()> {
         while let Some(incoming) = self.endpoint.accept().await {
             match incoming.await {
                 Ok(connection) => {
                     let quic_connection = QuicConnection::new(self.node_id.clone(), connection, &self.config);
-                    let id = quic_connection.id();
-                    let conn = Arc::new(Mutex::new(quic_connection));
-                    let mut connections = self.connections.lock().await;
-                    connections.insert(id, Arc::clone(&conn));
-                    sender.send(conn).await?;
+                    sender.send(quic_connection).await?;
                 }
                 Err(e) => {
                     eprintln!("Error accepting connection: {:?}", e);
                 }
             };
-        }
-        Ok(())
-    }
-
-    pub async fn get_connection(&self, id: ConnectionId) -> Option<Arc<Mutex<QuicConnection>>> {
-        let connections = self.connections.lock().await;
-        connections.get(&id).cloned()
-    }
-
-    pub async fn get_all_connections(&self) -> Vec<Arc<Mutex<QuicConnection>>> {
-        let connections = self.connections.lock().await;
-        connections.values().cloned().collect()
-    }
-
-    pub async fn close_connection(&mut self, id: ConnectionId) -> Result<()> {
-        // Lock the connections and take out the connection
-        let connection = {
-            let mut connections = self.connections.lock().await;
-            connections.remove(&id)
-        };
-        // Close the connection if it exists
-        if let Some(conn) = connection {
-            let conn = Arc::try_unwrap(conn).map_err(|_| anyhow!("Failed to remove connection"))?;
-            let mut conn = conn.lock().await;
-            conn.close().await?;
         }
         Ok(())
     }

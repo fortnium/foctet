@@ -1,10 +1,10 @@
 use clap::Parser;
 use foctet_core::{error::StreamError, frame::{Frame, FrameType, Payload}, node::NodeId};
-use foctet_net::connection::{tcp::{TcpConnection, TcpSocket}, NetworkStream};
+use foctet_net::connection::{tcp::{TcpSocket, TlsTcpStream}, FoctetStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 use std::path::PathBuf;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
 
     let mut tcp_socket = TcpSocket::new(node_id, socket_config)?;
 
-    let (conn_tx, mut conn_rx) = mpsc::channel::<Arc<Mutex<TcpConnection>>>(100);
+    let (conn_tx, mut conn_rx) = mpsc::channel::<TlsTcpStream>(100);
     tracing::info!("Starting TCP listener...");
     // Start the TCP listener
     tokio::spawn(async move {
@@ -84,11 +84,9 @@ async fn main() -> Result<()> {
     tracing::info!("TCP listener listening on: {:?}", args.server_addr);
     // Handle incoming connections
     tracing::info!("Waiting for incoming connections...");
-    while let Some(conn) = conn_rx.recv().await {
+    while let Some(mut stream) = conn_rx.recv().await {
         tokio::spawn(async move {
-            let conn = conn.lock().await;
-            tracing::info!("New connection: {:?}", conn.remote_address());
-            let mut stream = conn.stream.lock().await;
+            tracing::info!("New connection: {:?}", stream.remote_address());
             tracing::info!("New stream: {}", stream.stream_id);
             loop {
                 match stream.receive_frame().await {

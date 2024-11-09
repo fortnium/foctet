@@ -1,10 +1,10 @@
 use clap::Parser;
 use foctet_core::{error::{ConnectionError, StreamError}, frame::{Frame, FrameType, Payload}, node::NodeId};
-use foctet_net::connection::{quic::{QuicConnection, QuicSocket}, NetworkStream};
+use foctet_net::connection::{quic::{QuicConnection, QuicSocket}, FoctetStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 use std::path::PathBuf;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
 
     let mut quic_socket = QuicSocket::new(node_id, socket_config)?;
 
-    let (conn_tx, mut conn_rx) = mpsc::channel::<Arc<Mutex<QuicConnection>>>(100);
+    let (conn_tx, mut conn_rx) = mpsc::channel::<QuicConnection>(100);
     tracing::info!("Starting QUIC listener...");
     // Start the QUIC listener
     tokio::spawn(async move {
@@ -84,13 +84,12 @@ async fn main() -> Result<()> {
     tracing::info!("QUIC listener listening on: {:?}", args.server_addr);
     // Handle incoming connections
     tracing::info!("Waiting for incoming connections...");
-    while let Some(conn) = conn_rx.recv().await {
+    while let Some(mut conn) = conn_rx.recv().await {
         tokio::spawn(async move {
-            let mut conn = conn.lock().await;
             tracing::info!("New connection: {:?}", conn.remote_address());
             loop {
                 tracing::info!("Waiting for incoming stream...");
-                let stream_mutex = match conn.accept_stream().await {
+                let mut stream = match conn.accept_stream().await {
                     Ok(stream) => {
                         stream
                     }
@@ -111,7 +110,6 @@ async fn main() -> Result<()> {
                     }
                 };
                 tokio::spawn(async move {
-                    let mut stream = stream_mutex.lock().await;
                     tracing::info!("New stream: {}", stream.stream_id);
                     loop {
                         match stream.receive_frame().await {

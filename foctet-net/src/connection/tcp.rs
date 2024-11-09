@@ -1,20 +1,18 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use foctet_core::error::StreamError;
 use foctet_core::frame::{Frame, FrameType, Payload, StreamId};
 use foctet_core::node::{ConnectionId, NodeId};
-use foctet_core::state::ConnectionState;
 use futures::sink::SinkExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_stream::StreamExt;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
 use anyhow::Result;
 use crate::config::SocketConfig;
-use anyhow::anyhow;
 
-use super::NetworkStream;
+use super::FoctetStream;
 
 pub struct TlsTcpStream {
     pub stream: TlsStream<TcpStream>,
@@ -25,9 +23,16 @@ pub struct TlsTcpStream {
     pub receive_buffer_size: usize,
     pub is_closed: bool,
     pub next_operation_id: u64,
+    pub remote_address: SocketAddr,
 }
 
-impl NetworkStream for TlsTcpStream {
+impl FoctetStream for TlsTcpStream {
+    fn connection_id(&self) -> ConnectionId {
+        self.connection_id.clone()
+    }
+    fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
     async fn send_data(&mut self, data: &[u8]) -> Result<()> {
         let mut framed_writer: FramedWrite<&mut TlsStream<TcpStream>, LengthDelimitedCodec> = FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let mut offset = 0;
@@ -169,60 +174,11 @@ impl NetworkStream for TlsTcpStream {
     fn is_closed(&self) -> bool {
         self.is_closed
     }
-}
 
-pub struct TcpConnection {
-    pub node_id: NodeId,
-    pub connection_id: ConnectionId,
-    /// The TLS over TCP stream as the connection
-    pub stream: Arc<Mutex<TlsTcpStream>>,
-    pub state: ConnectionState,
-    pub send_buffer_size: usize,
-    pub receive_buffer_size: usize,
-    pub remote_address: SocketAddr,
-}
-
-impl TcpConnection {
-    pub fn new(node_id: NodeId, connection: TlsStream<TcpStream>, config: &SocketConfig) -> Self {
-        let connection_id = ConnectionId::new();
-        let remote_address = connection.get_ref().0.peer_addr().unwrap();
-        let tls_tcp_stream = TlsTcpStream {
-            stream: connection,
-            node_id: node_id.clone(),
-            stream_id: StreamId::new(0),
-            connection_id: connection_id.clone(),
-            send_buffer_size: config.write_buffer_size(),
-            receive_buffer_size: config.read_buffer_size(),
-            is_closed: false,
-            next_operation_id: 0,
-        };
-        Self {
-            node_id: node_id,
-            connection_id: connection_id,
-            stream: Arc::new(Mutex::new(tls_tcp_stream)),
-            state: ConnectionState::Connected,
-            send_buffer_size: config.write_buffer_size(),
-            receive_buffer_size: config.read_buffer_size(),
-            remote_address: remote_address,
-        }
-    }
-    pub async fn get_stream(&mut self) -> Arc<Mutex<TlsTcpStream>> {
-        Arc::clone(&self.stream)
-    }
-    pub async fn close(&mut self) -> Result<()> {
-        let mut connection = self.stream.lock().await;
-        if connection.is_closed {
-            Ok(())
-        } else {
-            connection.close().await
-        }
-    }
-    pub fn id(&self) -> ConnectionId {
-        self.connection_id.clone()
-    }
-    pub fn remote_address(&self) -> SocketAddr {
+    fn remote_address(&self) -> SocketAddr {
         self.remote_address
     }
+
 }
 
 pub struct TcpSocket {
@@ -230,7 +186,6 @@ pub struct TcpSocket {
     pub config: SocketConfig,
     pub tls_connector: TlsConnector,
     pub tls_acceptor: TlsAcceptor,
-    pub connections: Arc<Mutex<HashMap<ConnectionId, Arc<Mutex<TcpConnection>>>>>,
 }
 
 impl TcpSocket {
@@ -244,58 +199,46 @@ impl TcpSocket {
             config: config,
             tls_connector: tls_connector,
             tls_acceptor: tls_acceptor,
-            connections: Arc::new(Mutex::new(HashMap::new())),
         })
     }
-    pub async fn connect(&mut self, server_addr: SocketAddr, server_name: &str) -> Result<Arc<Mutex<TcpConnection>>> {
+
+    pub async fn connect(&mut self, server_addr: SocketAddr, server_name: &str) -> Result<TlsTcpStream> {
         let name = rustls_pki_types::ServerName::try_from(server_name.to_string())?;
         let stream = TcpStream::connect(server_addr).await?;
+        let remote_address = stream.peer_addr()?;
         let tls_stream = self.tls_connector.connect(name, stream).await?;
-        let tcp_connection = TcpConnection::new(self.node_id.clone(), TlsStream::Client(tls_stream), &self.config);
-        let id = tcp_connection.id();
-        let conn: Arc<Mutex<TcpConnection>> = Arc::new(Mutex::new(tcp_connection));        
-        let mut connections = self.connections.lock().await;
-        connections.insert(id.clone(), Arc::clone(&conn));
-        Ok(conn)
+        let tls_tcp_stream = TlsTcpStream {
+            stream: TlsStream::Client(tls_stream),
+            node_id: self.node_id.clone(),
+            stream_id: StreamId::new(0),
+            connection_id: ConnectionId::new(),
+            send_buffer_size: self.config.write_buffer_size(),
+            receive_buffer_size: self.config.read_buffer_size(),
+            is_closed: false,
+            next_operation_id: 0,
+            remote_address: remote_address,
+        };
+        Ok(tls_tcp_stream)
     }
 
-    pub async fn listen(&mut self, sender: mpsc::Sender<Arc<Mutex<TcpConnection>>>) -> Result<()> {
+    pub async fn listen(&mut self, sender: mpsc::Sender<TlsTcpStream>) -> Result<()> {
         let listener = TcpListener::bind(self.config.server_addr).await?;
         while let Ok((stream, _addr)) = listener.accept().await {
+            let remote_address = stream.peer_addr()?;
             let tls_stream = self.tls_acceptor.accept(stream).await?;
-            let tcp_connection = TcpConnection::new(self.node_id.clone(), TlsStream::Server(tls_stream), &self.config);
-            let id = tcp_connection.id();
-            let conn: Arc<Mutex<TcpConnection>> = Arc::new(Mutex::new(tcp_connection));
-            let mut connections = self.connections.lock().await;
-            connections.insert(id, Arc::clone(&conn));
-            sender.send(conn).await?;
+            let tls_tcp_stream = TlsTcpStream {
+                stream: TlsStream::Server(tls_stream),
+                node_id: self.node_id.clone(),
+                stream_id: StreamId::new(0),
+                connection_id: ConnectionId::new(),
+                send_buffer_size: self.config.write_buffer_size(),
+                receive_buffer_size: self.config.read_buffer_size(),
+                is_closed: false,
+                next_operation_id: 0,
+                remote_address: remote_address,
+            };
+            sender.send(tls_tcp_stream).await?;
         }
         Ok(())
     }
-
-    pub async fn get_connection(&self, id: ConnectionId) -> Option<Arc<Mutex<TcpConnection>>> {
-        let connections = self.connections.lock().await;
-        connections.get(&id).cloned()
-    }
-
-    pub async fn get_all_connections(&self) -> Vec<Arc<Mutex<TcpConnection>>> {
-        let connections = self.connections.lock().await;
-        connections.values().cloned().collect()
-    }
-
-    pub async fn close_connection(&mut self, id: ConnectionId) -> Result<()> {
-        // Lock the connections and take out the connection
-        let connection = {
-            let mut connections = self.connections.lock().await;
-            connections.remove(&id)
-        };
-        // Close the connection if it exists
-        if let Some(conn) = connection {
-            let conn = Arc::try_unwrap(conn).map_err(|_| anyhow!("Failed to remove connection"))?;
-            let mut conn = conn.lock().await;
-            conn.close().await?;
-        }
-        Ok(())
-    }
-
 }

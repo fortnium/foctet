@@ -1,6 +1,6 @@
 use clap::Parser;
 use foctet_core::{frame::Payload, node::NodeId};
-use foctet_net::connection::{quic::QuicSocket, NetworkStream};
+use foctet_net::connection::{quic::QuicSocket, FoctetStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::net::SocketAddr;
 use foctet_core::frame::{Frame, FrameType};
@@ -61,14 +61,12 @@ async fn main() -> Result<()> {
 
     let mut quic_socket = QuicSocket::new_client(node_id.clone(), socket_config)?;
     match quic_socket.connect(args.server_addr, &args.server_name).await {
-        Ok(conn) => {
+        Ok(mut conn) => {
             // Connection
-            let mut conn = conn.lock().await;
             tracing::info!("Connected to: {:?}", conn.remote_address());
             {
                 // Stream
-                let stream = conn.open_stream().await?;
-                let mut stream = stream.lock().await;
+                let mut stream = conn.open_stream().await?;
                 let frame: Frame = Frame::builder()
                     .with_fin(true)
                     .with_frame_type(FrameType::Text)
