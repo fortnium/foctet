@@ -1,8 +1,10 @@
 use clap::Parser;
+use foctet_core::content::TransferTicket;
 use foctet_core::{frame::Payload, node::NodeId};
 use foctet_net::connection::{tcp::TcpSocket, FoctetStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use foctet_core::frame::{Frame, FrameType};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
@@ -12,15 +14,23 @@ use anyhow::Result;
 /// Command line arguments for the file receiver.
 #[derive(Parser, Debug)]
 struct Args {
-    /// Server address to connect to.
+    /// Directory Path where the received file should be saved.
+    #[arg(
+        short = 's',
+        long = "save",
+        help = "Directory path where the received file should be saved.",
+        required = true
+    )]
+    save_path: PathBuf,
+    /// The transfer ticket to receive the file.
     //#[clap(default_value = "127.0.0.1:4432")]
     #[arg(
-        short = 'a',
-        long = "addr",
-        help = "Server address to connect to.",
-        default_value = "127.0.0.1:4432"
+        short = 't',
+        long = "ticket",
+        help = "The transfer ticket to receive the file.",
+        required = true
     )]
-    server_addr: SocketAddr,
+    ticket: String,
     /// Server name to validate the certificate against.
     #[arg(
         short = 'n',
@@ -57,35 +67,76 @@ async fn main() -> Result<()> {
         .with_max_read_buffer_size()
         .with_max_write_buffer_size();
 
+    let ticket_base64: String = args.ticket;
+    let ticket: TransferTicket = TransferTicket::from_base64(&ticket_base64)?;
+    let addr: SocketAddr = ticket.node_addr.get_socket_addr().ok_or_else(|| anyhow::anyhow!("No socket address found."))?;
+
     let node_id = NodeId::generate();
 
     let mut tcp_socket = TcpSocket::new(node_id.clone(), socket_config)?;
-    match tcp_socket.connect(args.server_addr, &args.server_name).await {
+    match tcp_socket.connect(addr, &args.server_name).await {
         Ok(mut stream) => {
             // Connection
             tracing::info!("Connected to: {:?}", stream.remote_address());
-            {
-                // Stream
-                let frame: Frame = Frame::builder()
-                    .with_fin(true)
-                    .with_frame_type(FrameType::Text)
-                    .with_operation_id(stream.next_operation_id)
-                    .with_payload(Payload::text("Hello! from client.".to_string()))
-                    .build();
-                tracing::info!("Sending a message...");
-                tracing::info!("Frame: {:?}", frame);
-                stream.send_frame(frame).await?;
-                tracing::info!("Message sent.");
-                // Wait for the server to respond
-                let frame = stream.receive_frame().await?;
-                tracing::info!("Received a message.");
-                tracing::info!("Frame: {:?}", frame);
-                tracing::info!("closing stream...");
-                stream.close().await?;
-                tracing::info!("stream closed.");
+            // 1. Send a content request
+            let content_request_frame: Frame = Frame::builder()
+                .with_fin(true)
+                .with_frame_type(FrameType::ContentRequest)
+                .with_operation_id(stream.next_operation_id)
+                .with_payload(Payload::ContentId(ticket.content_id))
+                .build();
+            tracing::info!("Sending a content request...");
+            tracing::debug!("Request: {:?}", content_request_frame);
+            stream.send_frame(content_request_frame).await?;
+            tracing::info!("Request sent.");
+            // 2. Wait for the server to respond with a transfer start frame including the metadata
+            let metadata_frame = stream.receive_frame().await?;
+            if metadata_frame.frame_type != FrameType::TransferStart {
+                tracing::error!("Expected a transfer start frame, but received: {:?}", metadata_frame);
+                return Err(anyhow::anyhow!("Expected a transfer start frame, but received: {:?}", metadata_frame));
             }
-            tracing::info!("closing connection...");
+            let metadata = if let Some(payload) = &metadata_frame.payload {
+                match payload {
+                    Payload::FileMetadata(metadata) => {
+                        
+                        metadata.clone()
+                    }
+                    _ => {
+                        tracing::error!("Expected a content metadata, but received: {:?}", metadata_frame);
+                        return Err(anyhow::anyhow!("Expected a content metadata, but received: {:?}", metadata_frame));
+                    }
+                }
+            } else {
+                tracing::error!("Expected a content metadata, but received: {:?}", metadata_frame);
+                return Err(anyhow::anyhow!("Expected a content metadata, but received: {:?}", metadata_frame));
+            };
+            tracing::info!("Received a content metadata");
+            tracing::debug!("Metadata: {:?}", metadata);
+            // 3. Receive the file content
+            let save_path = if args.save_path.is_dir() {
+                let mut save_path = args.save_path.clone();
+                save_path.push(metadata.name);
+                save_path
+            } else {
+                args.save_path.clone()
+            };
+            tracing::info!("Receiving file content...");
+            let start_time = std::time::Instant::now();
+            match stream.receive_file(&save_path).await {
+                Ok(_) => {
+                    tracing::info!("File content received.");
+                    tracing::info!("File saved to: {:?}", save_path);
+                    let elapsed = start_time.elapsed();
+                    tracing::info!("Elapsed time: {:?}", elapsed);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to receive file content: {:?}", e);
+                    return Err(e);
+                }
+            }
+            tracing::info!("closing stream...");
             stream.close().await?;
+            tracing::info!("stream closed.");
             tracing::info!("connection closed.");
         }
         Err(e) => {

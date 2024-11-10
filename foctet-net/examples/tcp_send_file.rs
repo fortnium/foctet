@@ -1,25 +1,38 @@
 use clap::Parser;
-use foctet_core::{error::StreamError, frame::{Frame, FrameType, Payload}, node::NodeId};
+use foctet_core::{content::{ContentId, TransferTicket}, error::StreamError, frame::{FileMetadata, Frame, FrameType, Payload}, node::{NodeAddr, NodeId}};
 use foctet_net::connection::{tcp::{TcpSocket, TlsTcpStream}, FoctetStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
-use std::net::SocketAddr;
+use std::{collections::{BTreeSet, HashMap}, net::{IpAddr, Ipv4Addr, SocketAddr}, sync::OnceLock};
 use std::path::PathBuf;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
 use anyhow::Result;
 
+// Lazy static map to store file metadata
+static METADATA_STORE: OnceLock<RwLock<HashMap<ContentId, FileMetadata>>> = OnceLock::new();
+static LOCALPATH_STORE: OnceLock<RwLock<HashMap<ContentId, PathBuf>>> = OnceLock::new();
+
 /// Command line arguments for the file sender.
 #[derive(Parser, Debug)]
 struct Args {
+    /// Path of the file to send.
+    #[arg(
+        short = 'f',
+        long = "file",
+        help = "Path of the file to send.",
+        required = true
+    )]
+    file_path: PathBuf,
+
     /// Server address to bind to.
     //#[clap(default_value = "0.0.0.0:4432")]
     #[arg(
         short = 'a',
         long = "addr",
         help = "Server address to bind to.",
-        default_value = "0.0.0.0:4432"
+        default_value = "0.0.0.0:4432",
     )]
     server_addr: SocketAddr,
 
@@ -61,18 +74,30 @@ async fn main() -> Result<()> {
         TlsConfig::new_insecure_config()?
     };
     let socket_config = SocketConfig::new(tls_config)
+        .with_server_addr(args.server_addr)
         .with_max_read_buffer_size()
         .with_max_write_buffer_size();
 
+    let mut addrs: BTreeSet<SocketAddr> = BTreeSet::new();
+    if args.server_addr == foctet_core::default::DEFAULT_SERVER_V4_ADDR {
+        addrs.insert(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), args.server_addr.port()));
+        let default_interface = netdev::get_default_interface().unwrap();
+        for ipv4addr in  default_interface.ipv4 {
+            addrs.insert(SocketAddr::new(IpAddr::V4(ipv4addr.addr()), args.server_addr.port()));
+        }
+    }else{
+        addrs.insert(args.server_addr);
+    }
+
     let node_id = NodeId::generate();
 
-    let mut tcp_socket = TcpSocket::new(node_id, socket_config)?;
+    let mut tcp_socket = TcpSocket::new(node_id.clone(), socket_config)?;
 
-    let (conn_tx, mut conn_rx) = mpsc::channel::<TlsTcpStream>(100);
+    let (stream_tx, mut stream_rx) = mpsc::channel::<TlsTcpStream>(100);
     tracing::info!("Starting TCP listener...");
     // Start the TCP listener
     tokio::spawn(async move {
-        match tcp_socket.listen(conn_tx).await {
+        match tcp_socket.listen(stream_tx).await {
             Ok(_) => {
                 tracing::info!("TCP listener stopped.");
             }
@@ -81,38 +106,107 @@ async fn main() -> Result<()> {
             }
         }
     });
-    tracing::info!("TCP listener listening on: {:?}", args.server_addr);
+
+    let node_addr = NodeAddr::new(node_id.clone()).with_socket_addresses(addrs);
+    let content_id = ContentId::new();
+
+    for addr in &node_addr.socket_addresses {
+        tracing::info!("TCP listener listening on: {:?}", addr);
+    }
+
     // Handle incoming connections
     tracing::info!("Waiting for incoming connections...");
-    while let Some(mut stream) = conn_rx.recv().await {
+
+    let file_metadata = foctet_core::fs::get_file_metadata(&args.file_path, false)?;
+
+    // Register the file metadata
+    METADATA_STORE.get_or_init(|| RwLock::new(HashMap::new()))
+        .write()
+        .await
+        .insert(content_id.clone(), file_metadata);
+
+    // Register the file path
+    LOCALPATH_STORE.get_or_init(|| RwLock::new(HashMap::new()))
+        .write()
+        .await
+        .insert(content_id.clone(), args.file_path.clone());
+
+    let ticket = TransferTicket::new(node_addr, content_id);
+    let ticket_base64 = ticket.to_base64()?;
+    tracing::info!("Share this ticket with the receiver: {}", ticket_base64);
+
+    while let Some(mut stream) = stream_rx.recv().await {
+        tracing::info!("New connection: {:?}", stream.remote_address());
         tokio::spawn(async move {
-            tracing::info!("New connection: {:?}", stream.remote_address());
             tracing::info!("New stream: {}", stream.stream_id);
             loop {
                 match stream.receive_frame().await {
                     Ok(frame) => {
-                        if frame.payload_len() < 128 {
-                            tracing::info!("{} Received frame: {:?}", stream.stream_id, frame);
-                        } else {
-                            tracing::info!("{} Received frame type: {:?}", stream.stream_id, frame.frame_type);
-                        }
-                        tracing::info!("{} Total length: {:?}", stream.stream_id, frame.len());
-                        tracing::info!("{} Payload length: {}", stream.stream_id, frame.payload_len());
-                        // Send a response
-                        let frame: Frame = Frame::builder()
-                            .with_fin(true)
-                            .with_frame_type(FrameType::Text)
-                            .with_operation_id(stream.next_operation_id)
-                            .with_payload(Payload::text("Hello! from server.".to_string()))
-                            .build();
-                        tracing::info!("{} Sending a response frame...", stream.stream_id);
-                        tracing::info!("Frame: {:?}", frame);
-                        match stream.send_frame(frame).await {
-                            Ok(_) => {
-                                tracing::info!("{} Response sent.", stream.stream_id);
-                            }
-                            Err(e) => {
-                                tracing::error!("{} Error sending response: {:?}", stream.stream_id, e);
+                        match frame.frame_type {
+                            FrameType::ContentRequest => {
+                                
+                                // 1. Check if the requested content
+                                let cid = if let Some(payload) = frame.payload {
+                                    match payload {
+                                        Payload::ContentId(cid) => {
+                                            cid
+                                        }
+                                        _ => {
+                                            tracing::error!("{} Missing content ID", stream.stream_id);
+                                            break;
+                                        }
+                                    }
+                                }else {
+                                    tracing::error!("{} Missing payload", stream.stream_id);
+                                    break;
+                                };
+
+                                let matadata = if let Some(metadata) = METADATA_STORE.get_or_init(|| RwLock::new(HashMap::new())).read().await.get(&cid) {
+                                    metadata.clone()
+                                } else {
+                                    tracing::error!("{} Content not found: {:?}", stream.stream_id, cid);
+                                    break;
+                                };
+
+                                // 2. Send the file metadata
+                                let metadata_frame: Frame = Frame::builder()
+                                    .with_fin(true)
+                                    .with_frame_type(FrameType::TransferStart)
+                                    .with_operation_id(stream.next_operation_id)
+                                    .with_payload(Payload::FileMetadata(matadata))
+                                    .build();
+                                tracing::info!("{} Sending metadata...", stream.stream_id);
+                                match stream.send_frame(metadata_frame).await {
+                                    Ok(_) => {
+                                        tracing::info!("{} Metadata sent.", stream.stream_id);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("{} Error sending metadata: {:?}", stream.stream_id, e);
+                                        break;
+                                    }
+                                }
+                                // 3. Send the file in chunks
+                                let file_path = if let Some(file_path) = LOCALPATH_STORE.get_or_init(|| RwLock::new(HashMap::new())).read().await.get(&cid) {
+                                    file_path.clone()
+                                } else {
+                                    tracing::error!("{} File path not found: {:?}", stream.stream_id, cid);
+                                    break;
+                                };
+                                let start_time = std::time::Instant::now();
+                                match stream.send_file(&file_path).await {
+                                    Ok(_) => {
+                                        tracing::info!("{} File sent.", stream.stream_id);
+                                        let elapsed = start_time.elapsed();
+                                        tracing::info!("Elapsed time: {:?}", elapsed);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("{} Error sending file: {:?}", stream.stream_id, e);
+                                        break;
+                                    }
+                                }
+                            },
+                            _ => {
+                                tracing::error!("{} Unexpected frame type: {:?}", stream.stream_id, frame.frame_type);
                                 break;
                             }
                         }
@@ -135,6 +229,14 @@ async fn main() -> Result<()> {
                 }
             }
             tracing::info!("{} Closing stream", stream.stream_id);
+            match stream.close().await {
+                Ok(_) => {
+                    tracing::info!("{} Stream closed.", stream.stream_id);
+                }
+                Err(e) => {
+                    tracing::error!("{} Error closing stream: {:?}", stream.stream_id, e);
+                }
+            }
         });
     }
     Ok(())
