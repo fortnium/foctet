@@ -8,8 +8,12 @@ pub mod path;
 pub mod timeout;
 pub mod tls;
 
-use std::{path::{Path, PathBuf}, sync::{Mutex, MutexGuard, OnceLock}};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard, OnceLock},
+};
 
+use anyhow::Result;
 use buffer::BufferConfig;
 use cache::CacheConfig;
 use database::DatabaseConfig;
@@ -21,7 +25,6 @@ use path::PathConfig;
 use serde::{Deserialize, Serialize};
 use timeout::TimeoutConfig;
 use tls::TlsConfig;
-use anyhow::Result;
 
 pub static CONFIG: OnceLock<Mutex<FoctetConfig>> = OnceLock::new();
 
@@ -110,7 +113,7 @@ pub fn get_config() -> Result<MutexGuard<'static, FoctetConfig>> {
         }
     };
     let config = CONFIG.get_or_init(|| {
-        tracing::debug!("Config not loaded, loading config");        
+        tracing::debug!("Config not loaded, loading config");
         let config = FoctetConfig::from_file(&config_path).unwrap();
         Mutex::new(config)
     });
@@ -129,7 +132,7 @@ pub fn config_file_exists() -> bool {
             let config_file_path = user_data_dir.join(DEFAULT_CONFIG_FILE);
             if config_file_path.exists() {
                 FoctetConfig::from_file(&config_file_path).is_ok()
-            }else {
+            } else {
                 false
             }
         }

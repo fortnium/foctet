@@ -1,5 +1,5 @@
-use clap::ArgMatches;
 use anyhow::Result;
+use clap::ArgMatches;
 
 /// Handle the `show` subcommand
 /// This will show the global configuration
@@ -19,7 +19,7 @@ pub fn handle(_args: &ArgMatches) -> Result<()> {
             println!("{}", config_str);
             println!("----------------------");
             Ok(())
-        },
+        }
         Err(e) => {
             tracing::error!("Failed to convert config to string: {}", e);
             anyhow::bail!("Failed to convert config to string: {}", e);

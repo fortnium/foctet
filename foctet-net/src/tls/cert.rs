@@ -1,10 +1,10 @@
 //! Certificate handling utilities
 
+use anyhow::Result;
 use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use std::sync::Arc;
 use std::{fs, io, path::Path};
-use anyhow::Result;
 
 /// Get the native certificates from the system. return rustls::RootCertStore
 pub fn get_native_certs() -> io::Result<rustls::RootCertStore> {

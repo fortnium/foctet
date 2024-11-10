@@ -1,19 +1,19 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
-use std::sync::OnceLock;
-use std::time::Duration;
+use anyhow::anyhow;
+use anyhow::Result;
 use base64::{engine::general_purpose::URL_SAFE, Engine};
-use uuid::Uuid;
 use ring::pkcs8::Document;
 use ring::rand::SystemRandom;
 use ring::signature::Ed25519KeyPair;
 use ring::signature::KeyPair;
 use ring::signature::ED25519_PUBLIC_KEY_LEN;
-use ttl_cache::TtlCache;
 use serde::{Deserialize, Serialize};
-use anyhow::Result;
-use anyhow::anyhow;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
+use ttl_cache::TtlCache;
+use uuid::Uuid;
 
 use crate::hash::Blake3Hash;
 
@@ -50,7 +50,8 @@ pub fn verify_signature(public_key: &[u8], message: &[u8], signature: &[u8]) -> 
 const KEY_CACHE_CAPACITY: usize = 1024 * 16;
 
 // The key cache is a TTL cache that stores public keys using the node ID (BLAKE3 hash of the public key) as the key.
-pub static KEY_CACHE: OnceLock<Mutex<TtlCache<[u8; ED25519_PUBLIC_KEY_LEN], NodePublicKey>>> = OnceLock::new();
+pub static KEY_CACHE: OnceLock<Mutex<TtlCache<[u8; ED25519_PUBLIC_KEY_LEN], NodePublicKey>>> =
+    OnceLock::new();
 
 fn lock_key_cache() -> MutexGuard<'static, TtlCache<[u8; ED25519_PUBLIC_KEY_LEN], NodePublicKey>> {
     let mutex = KEY_CACHE.get_or_init(|| Mutex::new(TtlCache::new(KEY_CACHE_CAPACITY)));
@@ -76,23 +77,23 @@ impl NodePublicKey {
     pub fn generate() -> Self {
         let rng = SystemRandom::new();
         let key_pair = Ed25519KeyPair::generate_pkcs8(&rng).expect("Failed to generate key pair");
-        let key_pair = Ed25519KeyPair::from_pkcs8(key_pair.as_ref()).expect("Failed to parse key pair");
+        let key_pair =
+            Ed25519KeyPair::from_pkcs8(key_pair.as_ref()).expect("Failed to parse key pair");
         let bytes = key_pair.public_key().as_ref();
         let mut public_key = [0; ED25519_PUBLIC_KEY_LEN];
         public_key.copy_from_slice(bytes);
         NodePublicKey {
-            public_key: public_key
+            public_key: public_key,
         }
     }
 
     /// Loads a `PublicKey` from a given byte slice.
     pub fn from_bytes(public_key_bytes: &[u8]) -> Self {
-        let public_key = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_key_bytes);
+        let public_key =
+            ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_key_bytes);
         let mut key = [0; ED25519_PUBLIC_KEY_LEN];
         key.copy_from_slice(public_key.as_ref());
-        NodePublicKey {
-            public_key: key
-        }
+        NodePublicKey { public_key: key }
     }
 
     /// Returns the public key as a byte slice.
@@ -118,7 +119,11 @@ impl NodePublicKey {
     /// Caches the public key using the node ID as the key.
     pub fn cache(&self) {
         let mut cache = lock_key_cache();
-        cache.insert(self.public_key, self.clone(), Duration::from_secs(60 * 60 * 24 * 7));
+        cache.insert(
+            self.public_key,
+            self.clone(),
+            Duration::from_secs(60 * 60 * 24 * 7),
+        );
     }
 
     /// Tries to get the `PublicKey` from the cache.
@@ -131,7 +136,7 @@ impl NodePublicKey {
     /// This is used as a placeholder for an empty public key.
     pub fn zero() -> Self {
         NodePublicKey {
-            public_key: [0; ED25519_PUBLIC_KEY_LEN]
+            public_key: [0; ED25519_PUBLIC_KEY_LEN],
         }
     }
     /// Check if the public key is zero.
@@ -165,14 +170,14 @@ impl NodeKeyPair {
         let rng = SystemRandom::new();
         let key_pair = Ed25519KeyPair::generate_pkcs8(&rng).expect("Failed to generate key pair");
         NodeKeyPair {
-            key_pair: key_pair.as_ref().to_vec()
+            key_pair: key_pair.as_ref().to_vec(),
         }
     }
 
     /// Loads a `KeyPair` from a given byte slice of PKCS#8 document.
     pub fn from_bytes(key_pair_bytes: &[u8]) -> Result<Self> {
         load_key_pair(key_pair_bytes).map(|_key_pair| NodeKeyPair {
-            key_pair: key_pair_bytes.to_vec()
+            key_pair: key_pair_bytes.to_vec(),
         })
     }
 
@@ -183,14 +188,16 @@ impl NodeKeyPair {
 
     /// Returns the public key of the key pair.
     pub fn public_key(&self) -> NodePublicKey {
-        let key_pair = Ed25519KeyPair::from_pkcs8(self.key_pair.as_ref()).expect("Failed to parse key pair");
+        let key_pair =
+            Ed25519KeyPair::from_pkcs8(self.key_pair.as_ref()).expect("Failed to parse key pair");
         let bytes = key_pair.public_key().as_ref();
         NodePublicKey::from_bytes(bytes)
     }
 
     /// Signs a message using the key pair.
     pub fn sign(&self, message: &[u8]) -> Vec<u8> {
-        let key_pair = Ed25519KeyPair::from_pkcs8(self.key_pair.as_ref()).expect("Failed to parse key pair");
+        let key_pair =
+            Ed25519KeyPair::from_pkcs8(self.key_pair.as_ref()).expect("Failed to parse key pair");
         key_pair.sign(message).as_ref().to_vec()
     }
 
@@ -204,11 +211,13 @@ impl NodeKeyPair {
 
     /// Saves the key pair to a default file.
     pub fn save_to_default_file(&self) -> Result<PathBuf> {
-        let relative_path: PathBuf = PathBuf::from(crate::default::DEFAULT_KEYS_DIR).join(crate::default::DEFAULT_KEYPAIR_FILE);
-        let path = crate::fs::get_user_data_path(&relative_path).ok_or_else(|| anyhow!("failed to get user file path"))?;
+        let relative_path: PathBuf = PathBuf::from(crate::default::DEFAULT_KEYS_DIR)
+            .join(crate::default::DEFAULT_KEYPAIR_FILE);
+        let path = crate::fs::get_user_data_path(&relative_path)
+            .ok_or_else(|| anyhow!("failed to get user file path"))?;
         match self.save_to_file(&path) {
             Ok(_) => Ok(path),
-            Err(e) => Err(e)
+            Err(e) => Err(e),
         }
     }
 
@@ -220,11 +229,12 @@ impl NodeKeyPair {
 
     /// Loads a key pair from a default file.
     pub fn load_from_default_file() -> Result<Self> {
-        let relative_path: PathBuf = PathBuf::from(crate::default::DEFAULT_KEYS_DIR).join(crate::default::DEFAULT_KEYPAIR_FILE);
-        let path = crate::fs::get_user_data_path(&relative_path).ok_or_else(|| anyhow!("failed to get user file path"))?;
+        let relative_path: PathBuf = PathBuf::from(crate::default::DEFAULT_KEYS_DIR)
+            .join(crate::default::DEFAULT_KEYPAIR_FILE);
+        let path = crate::fs::get_user_data_path(&relative_path)
+            .ok_or_else(|| anyhow!("failed to get user file path"))?;
         NodeKeyPair::load_from_file(&path)
     }
-
 }
 
 /// Generate a new UUID (Universally Unique Identifier) byte array.
@@ -283,7 +293,10 @@ mod tests {
         let public_key_bytes = key_pair.public_key().as_ref();
         let public_key = NodePublicKey::from_bytes(public_key_bytes);
         assert_eq!(public_key.as_bytes(), public_key.public_key.as_ref());
-        assert_eq!(public_key.hash().unwrap(), crate::hash::calculate_hash(public_key.as_bytes()).unwrap());
+        assert_eq!(
+            public_key.hash().unwrap(),
+            crate::hash::calculate_hash(public_key.as_bytes()).unwrap()
+        );
         public_key.cache();
         let cached_public_key = NodePublicKey::from_cache(public_key.public_key).unwrap();
         assert_eq!(cached_public_key.as_bytes(), public_key.as_bytes());

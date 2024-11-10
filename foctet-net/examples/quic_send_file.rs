@@ -1,9 +1,21 @@
 use clap::Parser;
-use foctet_core::{content::{ContentId, TransferTicket}, error::{ConnectionError, StreamError}, frame::{FileMetadata, Frame, FrameType, Payload}, node::{NodeAddr, NodeId}};
-use foctet_net::connection::{quic::{QuicConnection, QuicSocket}, FoctetStream};
+use foctet_core::{
+    content::{ContentId, TransferTicket},
+    error::{ConnectionError, StreamError},
+    frame::{FileMetadata, Frame, FrameType, Payload},
+    node::{NodeAddr, NodeId},
+};
+use foctet_net::connection::{
+    quic::{QuicConnection, QuicSocket},
+    FoctetStream,
+};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
-use std::{collections::{BTreeSet, HashMap}, net::{IpAddr, Ipv4Addr, SocketAddr}, sync::OnceLock};
 use std::path::PathBuf;
+use std::{
+    collections::{BTreeSet, HashMap},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::OnceLock,
+};
 use tokio::sync::{mpsc, RwLock};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
@@ -32,7 +44,7 @@ struct Args {
         short = 'a',
         long = "addr",
         help = "Server address to bind to.",
-        default_value = "0.0.0.0:4432",
+        default_value = "0.0.0.0:4432"
     )]
     server_addr: SocketAddr,
 
@@ -80,12 +92,18 @@ async fn main() -> Result<()> {
 
     let mut addrs: BTreeSet<SocketAddr> = BTreeSet::new();
     if args.server_addr == foctet_core::default::DEFAULT_SERVER_V4_ADDR {
-        addrs.insert(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), args.server_addr.port()));
+        addrs.insert(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            args.server_addr.port(),
+        ));
         let default_interface = netdev::get_default_interface().unwrap();
-        for ipv4addr in  default_interface.ipv4 {
-            addrs.insert(SocketAddr::new(IpAddr::V4(ipv4addr.addr()), args.server_addr.port()));
+        for ipv4addr in default_interface.ipv4 {
+            addrs.insert(SocketAddr::new(
+                IpAddr::V4(ipv4addr.addr()),
+                args.server_addr.port(),
+            ));
         }
-    }else{
+    } else {
         addrs.insert(args.server_addr);
     }
 
@@ -120,13 +138,15 @@ async fn main() -> Result<()> {
     let file_metadata = foctet_core::fs::get_file_metadata(&args.file_path, false)?;
 
     // Register the file metadata
-    METADATA_STORE.get_or_init(|| RwLock::new(HashMap::new()))
+    METADATA_STORE
+        .get_or_init(|| RwLock::new(HashMap::new()))
         .write()
         .await
         .insert(content_id.clone(), file_metadata);
 
     // Register the file path
-    LOCALPATH_STORE.get_or_init(|| RwLock::new(HashMap::new()))
+    LOCALPATH_STORE
+        .get_or_init(|| RwLock::new(HashMap::new()))
         .write()
         .await
         .insert(content_id.clone(), args.file_path.clone());
@@ -141,20 +161,21 @@ async fn main() -> Result<()> {
             loop {
                 tracing::info!("Waiting for incoming stream...");
                 let mut stream = match conn.accept_stream().await {
-                    Ok(stream) => {
-                        stream
-                    }
+                    Ok(stream) => stream,
                     Err(e) => {
                         if let Some(stream_error) = e.downcast_ref::<ConnectionError>() {
                             match stream_error {
                                 ConnectionError::Closed => {
-                                    tracing::info!("Connection closed while waiting for {}", conn.next_stream_id);
+                                    tracing::info!(
+                                        "Connection closed while waiting for {}",
+                                        conn.next_stream_id
+                                    );
                                 }
                                 _ => {
                                     tracing::error!("Error accepting stream: {:?}", e);
                                 }
                             }
-                        }else{
+                        } else {
                             tracing::error!("Error accepting stream: {:?}", e);
                         }
                         break;
@@ -167,27 +188,36 @@ async fn main() -> Result<()> {
                             Ok(frame) => {
                                 match frame.frame_type {
                                     FrameType::ContentRequest => {
-                                        
                                         // 1. Check if the requested content
                                         let cid = if let Some(payload) = frame.payload {
                                             match payload {
-                                                Payload::ContentId(cid) => {
-                                                    cid
-                                                }
+                                                Payload::ContentId(cid) => cid,
                                                 _ => {
-                                                    tracing::error!("{} Missing content ID", stream.stream_id);
+                                                    tracing::error!(
+                                                        "{} Missing content ID",
+                                                        stream.stream_id
+                                                    );
                                                     break;
                                                 }
                                             }
-                                        }else {
+                                        } else {
                                             tracing::error!("{} Missing payload", stream.stream_id);
                                             break;
                                         };
 
-                                        let matadata = if let Some(metadata) = METADATA_STORE.get_or_init(|| RwLock::new(HashMap::new())).read().await.get(&cid) {
+                                        let matadata = if let Some(metadata) = METADATA_STORE
+                                            .get_or_init(|| RwLock::new(HashMap::new()))
+                                            .read()
+                                            .await
+                                            .get(&cid)
+                                        {
                                             metadata.clone()
                                         } else {
-                                            tracing::error!("{} Content not found: {:?}", stream.stream_id, cid);
+                                            tracing::error!(
+                                                "{} Content not found: {:?}",
+                                                stream.stream_id,
+                                                cid
+                                            );
                                             break;
                                         };
 
@@ -201,18 +231,34 @@ async fn main() -> Result<()> {
                                         tracing::info!("{} Sending metadata...", stream.stream_id);
                                         match stream.send_frame(metadata_frame).await {
                                             Ok(_) => {
-                                                tracing::info!("{} Metadata sent.", stream.stream_id);
+                                                tracing::info!(
+                                                    "{} Metadata sent.",
+                                                    stream.stream_id
+                                                );
                                             }
                                             Err(e) => {
-                                                tracing::error!("{} Error sending metadata: {:?}", stream.stream_id, e);
+                                                tracing::error!(
+                                                    "{} Error sending metadata: {:?}",
+                                                    stream.stream_id,
+                                                    e
+                                                );
                                                 break;
                                             }
                                         }
                                         // 3. Send the file in chunks
-                                        let file_path = if let Some(file_path) = LOCALPATH_STORE.get_or_init(|| RwLock::new(HashMap::new())).read().await.get(&cid) {
+                                        let file_path = if let Some(file_path) = LOCALPATH_STORE
+                                            .get_or_init(|| RwLock::new(HashMap::new()))
+                                            .read()
+                                            .await
+                                            .get(&cid)
+                                        {
                                             file_path.clone()
                                         } else {
-                                            tracing::error!("{} File path not found: {:?}", stream.stream_id, cid);
+                                            tracing::error!(
+                                                "{} File path not found: {:?}",
+                                                stream.stream_id,
+                                                cid
+                                            );
                                             break;
                                         };
                                         let start_time = std::time::Instant::now();
@@ -223,13 +269,21 @@ async fn main() -> Result<()> {
                                                 tracing::info!("Elapsed time: {:?}", elapsed);
                                             }
                                             Err(e) => {
-                                                tracing::error!("{} Error sending file: {:?}", stream.stream_id, e);
+                                                tracing::error!(
+                                                    "{} Error sending file: {:?}",
+                                                    stream.stream_id,
+                                                    e
+                                                );
                                                 break;
                                             }
                                         }
-                                    },
+                                    }
                                     _ => {
-                                        tracing::error!("{} Unexpected frame type: {:?}", stream.stream_id, frame.frame_type);
+                                        tracing::error!(
+                                            "{} Unexpected frame type: {:?}",
+                                            stream.stream_id,
+                                            frame.frame_type
+                                        );
                                         break;
                                     }
                                 }
@@ -241,11 +295,19 @@ async fn main() -> Result<()> {
                                             tracing::info!("{} Stream closed.", stream.stream_id);
                                         }
                                         _ => {
-                                            tracing::error!("{} Error receiving frame: {:?}", stream.stream_id, e);
+                                            tracing::error!(
+                                                "{} Error receiving frame: {:?}",
+                                                stream.stream_id,
+                                                e
+                                            );
                                         }
                                     }
-                                }else{
-                                    tracing::error!("{} Error receiving frame: {:?}", stream.stream_id, e);
+                                } else {
+                                    tracing::error!(
+                                        "{} Error receiving frame: {:?}",
+                                        stream.stream_id,
+                                        e
+                                    );
                                 }
                                 break;
                             }
@@ -256,16 +318,18 @@ async fn main() -> Result<()> {
                         Ok(_) => {
                             tracing::info!("{} Stream closed.", stream.stream_id);
                         }
-                        Err(e) => {
-                            match e.downcast_ref::<quinn::ClosedStream>() {
-                                Some(_) => {
-                                    tracing::info!("{} Stream already closed.", stream.stream_id);
-                                }
-                                None => {
-                                    tracing::error!("{} Error closing stream: {:?}", stream.stream_id, e);
-                                }
+                        Err(e) => match e.downcast_ref::<quinn::ClosedStream>() {
+                            Some(_) => {
+                                tracing::info!("{} Stream already closed.", stream.stream_id);
                             }
-                        }
+                            None => {
+                                tracing::error!(
+                                    "{} Error closing stream: {:?}",
+                                    stream.stream_id,
+                                    e
+                                );
+                            }
+                        },
                     }
                 });
             }

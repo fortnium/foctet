@@ -1,5 +1,5 @@
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct UnixTimestamp(u64);

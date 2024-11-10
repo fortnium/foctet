@@ -1,5 +1,7 @@
 use crate::socket::SocketType;
 use crate::tls::TlsConfig;
+use anyhow::anyhow;
+use anyhow::Result;
 use foctet_core::default::{
     DEFAULT_BIND_V4_ADDR, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_MAX_RETRIES, DEFAULT_RECEIVE_TIMEOUT,
     DEFAULT_SERVER_V4_ADDR, DEFAULT_WRITE_BUFFER_SIZE,
@@ -11,8 +13,6 @@ use foctet_core::default::{
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
-use anyhow::Result;
-use anyhow::anyhow;
 
 /// The configuration for the socket.
 #[derive(Debug, Clone)]

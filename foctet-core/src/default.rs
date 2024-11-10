@@ -89,7 +89,7 @@ pub const DEFAULT_TLS_DIR: &str = "tls";
 pub const DEFAULT_CERT_FILE: &str = "cert.chain.pem";
 pub const DEFAULT_KEY_FILE: &str = "key.pem";
 
-/// The default keypair (PKCS#8 document) file name. 
+/// The default keypair (PKCS#8 document) file name.
 /// The PKCS#8 document is a v2 `OneAsymmetricKey` with the public key,
 /// as described in [RFC 5958 Section 2]; see [RFC 8410 Section 10.3]
 ///

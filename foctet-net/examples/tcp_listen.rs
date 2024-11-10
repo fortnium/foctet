@@ -1,6 +1,13 @@
 use clap::Parser;
-use foctet_core::{error::StreamError, frame::{Frame, FrameType, Payload}, node::NodeId};
-use foctet_net::connection::{tcp::{TcpSocket, TlsTcpStream}, FoctetStream};
+use foctet_core::{
+    error::StreamError,
+    frame::{Frame, FrameType, Payload},
+    node::NodeId,
+};
+use foctet_net::connection::{
+    tcp::{TcpSocket, TlsTcpStream},
+    FoctetStream,
+};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -94,10 +101,18 @@ async fn main() -> Result<()> {
                         if frame.payload_len() < 128 {
                             tracing::info!("{} Received frame: {:?}", stream.stream_id, frame);
                         } else {
-                            tracing::info!("{} Received frame type: {:?}", stream.stream_id, frame.frame_type);
+                            tracing::info!(
+                                "{} Received frame type: {:?}",
+                                stream.stream_id,
+                                frame.frame_type
+                            );
                         }
                         tracing::info!("{} Total length: {:?}", stream.stream_id, frame.len());
-                        tracing::info!("{} Payload length: {}", stream.stream_id, frame.payload_len());
+                        tracing::info!(
+                            "{} Payload length: {}",
+                            stream.stream_id,
+                            frame.payload_len()
+                        );
                         // Send a response
                         let frame: Frame = Frame::builder()
                             .with_fin(true)
@@ -112,7 +127,11 @@ async fn main() -> Result<()> {
                                 tracing::info!("{} Response sent.", stream.stream_id);
                             }
                             Err(e) => {
-                                tracing::error!("{} Error sending response: {:?}", stream.stream_id, e);
+                                tracing::error!(
+                                    "{} Error sending response: {:?}",
+                                    stream.stream_id,
+                                    e
+                                );
                                 break;
                             }
                         }
@@ -124,10 +143,14 @@ async fn main() -> Result<()> {
                                     tracing::info!("{} Stream closed.", stream.stream_id);
                                 }
                                 _ => {
-                                    tracing::error!("{} Error receiving frame: {:?}", stream.stream_id, e);
+                                    tracing::error!(
+                                        "{} Error receiving frame: {:?}",
+                                        stream.stream_id,
+                                        e
+                                    );
                                 }
                             }
-                        }else{
+                        } else {
                             tracing::error!("{} Error receiving frame: {:?}", stream.stream_id, e);
                         }
                         break;

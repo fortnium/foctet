@@ -1,11 +1,11 @@
 use clap::Parser;
 use foctet_core::content::TransferTicket;
+use foctet_core::frame::{Frame, FrameType};
 use foctet_core::{frame::Payload, node::NodeId};
 use foctet_net::connection::{tcp::TcpSocket, FoctetStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use foctet_core::frame::{Frame, FrameType};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -69,7 +69,10 @@ async fn main() -> Result<()> {
 
     let ticket_base64: String = args.ticket;
     let ticket: TransferTicket = TransferTicket::from_base64(&ticket_base64)?;
-    let addr: SocketAddr = ticket.node_addr.get_socket_addr().ok_or_else(|| anyhow::anyhow!("No socket address found."))?;
+    let addr: SocketAddr = ticket
+        .node_addr
+        .get_socket_addr()
+        .ok_or_else(|| anyhow::anyhow!("No socket address found."))?;
 
     let node_id = NodeId::generate();
 
@@ -92,23 +95,38 @@ async fn main() -> Result<()> {
             // 2. Wait for the server to respond with a transfer start frame including the metadata
             let metadata_frame = stream.receive_frame().await?;
             if metadata_frame.frame_type != FrameType::TransferStart {
-                tracing::error!("Expected a transfer start frame, but received: {:?}", metadata_frame);
-                return Err(anyhow::anyhow!("Expected a transfer start frame, but received: {:?}", metadata_frame));
+                tracing::error!(
+                    "Expected a transfer start frame, but received: {:?}",
+                    metadata_frame
+                );
+                return Err(anyhow::anyhow!(
+                    "Expected a transfer start frame, but received: {:?}",
+                    metadata_frame
+                ));
             }
             let metadata = if let Some(payload) = &metadata_frame.payload {
                 match payload {
-                    Payload::FileMetadata(metadata) => {
-                        
-                        metadata.clone()
-                    }
+                    Payload::FileMetadata(metadata) => metadata.clone(),
                     _ => {
-                        tracing::error!("Expected a content metadata, but received: {:?}", metadata_frame);
-                        return Err(anyhow::anyhow!("Expected a content metadata, but received: {:?}", metadata_frame));
+                        tracing::error!(
+                            "Expected a content metadata, but received: {:?}",
+                            metadata_frame
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Expected a content metadata, but received: {:?}",
+                            metadata_frame
+                        ));
                     }
                 }
             } else {
-                tracing::error!("Expected a content metadata, but received: {:?}", metadata_frame);
-                return Err(anyhow::anyhow!("Expected a content metadata, but received: {:?}", metadata_frame));
+                tracing::error!(
+                    "Expected a content metadata, but received: {:?}",
+                    metadata_frame
+                );
+                return Err(anyhow::anyhow!(
+                    "Expected a content metadata, but received: {:?}",
+                    metadata_frame
+                ));
             };
             tracing::info!("Received a content metadata");
             tracing::debug!("Metadata: {:?}", metadata);

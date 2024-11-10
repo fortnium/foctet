@@ -1,7 +1,12 @@
 use std::fmt;
 
-use serde::{Serialize, Deserialize};
-use crate::{content::ContentId, hash::Blake3Hash, node::{ConnectionId, NodeId}, time::UnixTimestamp};
+use crate::{
+    content::ContentId,
+    hash::Blake3Hash,
+    node::{ConnectionId, NodeId},
+    time::UnixTimestamp,
+};
+use serde::{Deserialize, Serialize};
 
 /// The frame structure that is sent between the peers
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
@@ -59,20 +64,20 @@ impl Frame {
 }
 
 pub struct FrameBuilder {
-   /// Indicates if this is the final frame in a sequence of frames for a particular operation.
-   fin: bool,
-   /// The type of the frame, used to distinguish different operations such as data transfer, connect, or disconnect.
-   frame_type: FrameType,
-   /// A unique identifier for the operation, allowing tracking of individual send/receive operations.
-   /// This ID can be used for error handling, retransmissions, and associating responses with requests.
-   operation_id: u64,
-   /// Flags providing additional information about the frame.
-   /// Each bit in this field can represent a specific flag, such as indicating fragmentation, priority, or compression.
-   flags: u8,
-   /// The payload of the frame. This can be any data that needs to be sent between the peers.
-   /// For file transfers, this will be the file binary data.
-   /// For messages, this will be the message string. encoded in UTF-8.
-   payload: Option<Payload>,
+    /// Indicates if this is the final frame in a sequence of frames for a particular operation.
+    fin: bool,
+    /// The type of the frame, used to distinguish different operations such as data transfer, connect, or disconnect.
+    frame_type: FrameType,
+    /// A unique identifier for the operation, allowing tracking of individual send/receive operations.
+    /// This ID can be used for error handling, retransmissions, and associating responses with requests.
+    operation_id: u64,
+    /// Flags providing additional information about the frame.
+    /// Each bit in this field can represent a specific flag, such as indicating fragmentation, priority, or compression.
+    flags: u8,
+    /// The payload of the frame. This can be any data that needs to be sent between the peers.
+    /// For file transfers, this will be the file binary data.
+    /// For messages, this will be the message string. encoded in UTF-8.
+    payload: Option<Payload>,
 }
 
 impl FrameBuilder {
@@ -196,19 +201,19 @@ impl Payload {
             Self::FileMetadata(metadata) => {
                 // Serialize the metadata to bytes and get the size
                 bincode::serialize(metadata).unwrap_or_default().len()
-            },
+            }
             Self::Metadata(metadata) => {
                 // Serialize the metadata to bytes and get the size
                 bincode::serialize(metadata).unwrap_or_default().len()
-            },
+            }
             Self::ConnectionInfo(info) => {
                 // Serialize the connection info to bytes and get the size
                 bincode::serialize(info).unwrap_or_default().len()
-            },
+            }
             Self::ContentId(id) => {
                 // Serialize the content ID to bytes and get the size
                 bincode::serialize(id).unwrap_or_default().len()
-            },
+            }
         }
     }
     /// Create a new data chunk payload

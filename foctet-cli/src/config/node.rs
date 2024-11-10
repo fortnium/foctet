@@ -1,8 +1,8 @@
+use anyhow::Result;
 use foctet::core::default::{DEFAULT_KEYPAIR_FILE, DEFAULT_KEYS_DIR};
 use foctet::core::key::NodeKeyPair;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use anyhow::Result;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeConfig {
@@ -15,9 +15,7 @@ impl NodeConfig {
         tracing::debug!("Try to get node config");
         // 1. Get user data directory path
         let user_data_dir: PathBuf = match foctet::core::fs::get_user_data_dir_path() {
-            Some(user_data_dir) => {
-                user_data_dir
-            }
+            Some(user_data_dir) => user_data_dir,
             None => {
                 anyhow::bail!("Failed to get user data directory path");
             }
@@ -44,7 +42,7 @@ impl NodeConfig {
                 node_id: key_pair.public_key().to_base64(),
                 key_pair_path: key_pair_path,
             })
-        }else{
+        } else {
             let key_pair = NodeKeyPair::load_from_default_file().unwrap();
             Ok(Self {
                 node_id: key_pair.public_key().to_base64(),

@@ -1,8 +1,18 @@
 pub mod actor;
 
-use foctet_core::{error::ConnectionError, node::{NodeAddr, NodeId}};
-use crate::{config::SocketConfig, connection::{quic::{QuicConnection, QuicSocket}, tcp::{TcpSocket, TlsTcpStream}, FoctetStream}};
+use crate::{
+    config::SocketConfig,
+    connection::{
+        quic::{QuicConnection, QuicSocket},
+        tcp::{TcpSocket, TlsTcpStream},
+        FoctetStream,
+    },
+};
 use anyhow::Result;
+use foctet_core::{
+    error::ConnectionError,
+    node::{NodeAddr, NodeId},
+};
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
@@ -33,10 +43,7 @@ pub struct Socket {
 
 impl Socket {
     pub fn new(node_addr: NodeAddr, config: SocketConfig) -> Self {
-        Self {
-            node_addr,
-            config,
-        }
+        Self { node_addr, config }
     }
     /// Start listening for incoming connections
     pub async fn listen(&mut self) -> Result<()> {
@@ -47,14 +54,14 @@ impl Socket {
                 tokio::spawn(async move {
                     let _ = start_quic_server(node_id.clone(), quic_config).await;
                 });
-            },
+            }
             SocketType::Tcp => {
                 let node_id = self.node_addr.node_id.clone();
                 let tcp_config = self.config.clone();
                 tokio::spawn(async move {
                     let _ = start_tcp_server(node_id.clone(), tcp_config).await;
                 });
-            },
+            }
             SocketType::Both => {
                 let node_id = self.node_addr.node_id.clone();
                 let quic_config = self.config.clone();
@@ -75,20 +82,24 @@ impl Socket {
     pub async fn connect(&self, server_addr: SocketAddr, server_name: &str) -> Result<()> {
         match self.config.socket_type {
             SocketType::Quic => {
-                let mut quic_socket = QuicSocket::new_client(self.node_addr.node_id.clone(), self.config.clone())?;
+                let mut quic_socket =
+                    QuicSocket::new_client(self.node_addr.node_id.clone(), self.config.clone())?;
                 let _conn = quic_socket.connect(server_addr, server_name).await?;
                 // Do something with the connection if needed
             }
             SocketType::Tcp => {
-                let mut tcp_socket = TcpSocket::new(self.node_addr.node_id.clone(), self.config.clone())?;
+                let mut tcp_socket =
+                    TcpSocket::new(self.node_addr.node_id.clone(), self.config.clone())?;
                 let _conn = tcp_socket.connect(server_addr, server_name).await?;
                 // Do something with the connection if needed
             }
             SocketType::Both => {
-                let mut quic_socket = QuicSocket::new_client(self.node_addr.node_id.clone(), self.config.clone())?;
+                let mut quic_socket =
+                    QuicSocket::new_client(self.node_addr.node_id.clone(), self.config.clone())?;
                 let _conn = quic_socket.connect(server_addr, server_name).await?;
                 // Do something with the connection if needed
-                let mut tcp_socket = TcpSocket::new(self.node_addr.node_id.clone(), self.config.clone())?;
+                let mut tcp_socket =
+                    TcpSocket::new(self.node_addr.node_id.clone(), self.config.clone())?;
                 let _conn = tcp_socket.connect(server_addr, server_name).await?;
                 // Do something with the connection if needed
             }
@@ -125,13 +136,16 @@ async fn start_quic_server(node_id: NodeId, config: SocketConfig) -> Result<()> 
                         if let Some(stream_error) = e.downcast_ref::<ConnectionError>() {
                             match stream_error {
                                 ConnectionError::Closed => {
-                                    tracing::info!("Connection closed while waiting for {}", conn.next_stream_id);
+                                    tracing::info!(
+                                        "Connection closed while waiting for {}",
+                                        conn.next_stream_id
+                                    );
                                 }
                                 _ => {
                                     tracing::error!("Error accepting stream: {:?}", e);
                                 }
                             }
-                        }else{
+                        } else {
                             tracing::error!("Error accepting stream: {:?}", e);
                         }
                         break;
@@ -176,9 +190,17 @@ where
     loop {
         match stream.receive_frame().await {
             Ok(frame) => {
-                tracing::info!("{} Received frame type: {:?}", stream.stream_id(), frame.frame_type);
+                tracing::info!(
+                    "{} Received frame type: {:?}",
+                    stream.stream_id(),
+                    frame.frame_type
+                );
                 tracing::info!("{} Total length: {:?}", stream.stream_id(), frame.len());
-                tracing::info!("{} Payload length: {}", stream.stream_id(), frame.payload_len());
+                tracing::info!(
+                    "{} Payload length: {}",
+                    stream.stream_id(),
+                    frame.payload_len()
+                );
                 // Process frame (e.g., relay, respond, etc.)
             }
             Err(e) => {

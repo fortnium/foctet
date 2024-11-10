@@ -1,10 +1,10 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use crate::app::{CRATE_BIN_NAME, CRATE_REPOSITORY};
 use clap::{crate_description, crate_version, value_parser};
 use clap::{Arg, Command};
 use foctet::core::addr::NamedSocketAddr;
-use crate::app::{CRATE_BIN_NAME, CRATE_REPOSITORY};
 
 pub fn build_cli() -> Command {
     let app_description: &str = crate_description!();

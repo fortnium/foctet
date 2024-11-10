@@ -1,4 +1,7 @@
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use foctet_core::node::{ConnectionId, NodeAddr, NodeId};
 use tokio::sync::RwLock;

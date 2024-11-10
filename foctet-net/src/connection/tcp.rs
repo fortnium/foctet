@@ -1,17 +1,17 @@
-use std::{net::SocketAddr, sync::Arc};
+use super::FoctetStream;
+use crate::config::SocketConfig;
+use anyhow::Result;
 use foctet_core::error::StreamError;
 use foctet_core::frame::{Frame, FrameType, Payload, StreamId};
 use foctet_core::node::{ConnectionId, NodeId};
 use futures::sink::SinkExt;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_stream::StreamExt;
-use tokio::sync::mpsc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
+use tokio::sync::mpsc;
 use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
-use anyhow::Result;
-use crate::config::SocketConfig;
-use super::FoctetStream;
+use tokio_stream::StreamExt;
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
 #[derive(Debug)]
 pub struct TlsTcpStream {
@@ -34,7 +34,8 @@ impl FoctetStream for TlsTcpStream {
         self.stream_id
     }
     async fn send_data(&mut self, data: &[u8]) -> Result<()> {
-        let mut framed_writer: FramedWrite<&mut TlsStream<TcpStream>, LengthDelimitedCodec> = FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
+        let mut framed_writer: FramedWrite<&mut TlsStream<TcpStream>, LengthDelimitedCodec> =
+            FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let mut offset = 0;
         while offset < data.len() {
             let end = std::cmp::min(offset + self.send_buffer_size, data.len());
@@ -178,7 +179,6 @@ impl FoctetStream for TlsTcpStream {
     fn remote_address(&self) -> SocketAddr {
         self.remote_address
     }
-
 }
 
 pub struct TcpSocket {
@@ -202,7 +202,11 @@ impl TcpSocket {
         })
     }
 
-    pub async fn connect(&mut self, server_addr: SocketAddr, server_name: &str) -> Result<TlsTcpStream> {
+    pub async fn connect(
+        &mut self,
+        server_addr: SocketAddr,
+        server_name: &str,
+    ) -> Result<TlsTcpStream> {
         let name = rustls_pki_types::ServerName::try_from(server_name.to_string())?;
         let stream = TcpStream::connect(server_addr).await?;
         let remote_address = stream.peer_addr()?;

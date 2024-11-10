@@ -1,18 +1,18 @@
-use std::net::SocketAddr;
+use super::{endpoint, FoctetStream};
+use crate::config::SocketConfig;
+use anyhow::anyhow;
+use anyhow::Result;
 use foctet_core::error::{ConnectionError, StreamError};
 use foctet_core::frame::{Frame, FrameType, Payload, StreamId};
 use foctet_core::node::{ConnectionId, NodeId};
 use foctet_core::state::ConnectionState;
 use futures::sink::SinkExt;
-use tokio::sync::mpsc;
+use quinn::{ClientConfig, Connection, Endpoint, RecvStream, SendStream, ServerConfig, VarInt};
+use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-use quinn::{ClientConfig, Connection, Endpoint, RecvStream, SendStream, ServerConfig, VarInt};
-use anyhow::Result;
-use anyhow::anyhow;
-use crate::config::SocketConfig;
-use super::{endpoint, FoctetStream};
 
 #[derive(Debug)]
 pub struct QuicStream {
@@ -36,7 +36,8 @@ impl FoctetStream for QuicStream {
         self.stream_id
     }
     async fn send_data(&mut self, data: &[u8]) -> Result<()> {
-        let mut framed_writer = FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
+        let mut framed_writer =
+            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let mut offset = 0;
         while offset < data.len() {
             let end = std::cmp::min(offset + self.send_buffer_size, data.len());
@@ -51,7 +52,7 @@ impl FoctetStream for QuicStream {
                 .build();
             let serialized_message = frame.to_bytes()?;
             framed_writer.send(serialized_message.into()).await?;
-            
+
             offset = end;
         }
         framed_writer.flush().await?;
@@ -77,20 +78,18 @@ impl FoctetStream for QuicStream {
                 }
                 Err(e) => {
                     //Safely cast the error to a quinn::ReadError
-                    match e.downcast::<quinn::ReadError>(){
-                        Ok(read_err) => {
-                            match read_err {
-                                quinn::ReadError::ClosedStream => {
-                                    tracing::info!("Stream closed by peer");
-                                }
-                                quinn::ReadError::ConnectionLost(_) => {
-                                    tracing::info!("Connection closed by peer");
-                                }
-                                _ => {
-                                    tracing::error!("Error reading from stream: {:?}", read_err);
-                                }
+                    match e.downcast::<quinn::ReadError>() {
+                        Ok(read_err) => match read_err {
+                            quinn::ReadError::ClosedStream => {
+                                tracing::info!("Stream closed by peer");
                             }
-                        }
+                            quinn::ReadError::ConnectionLost(_) => {
+                                tracing::info!("Connection closed by peer");
+                            }
+                            _ => {
+                                tracing::error!("Error reading from stream: {:?}", read_err);
+                            }
+                        },
                         Err(e) => {
                             tracing::error!("Error reading from stream: {:?}", e);
                         }
@@ -103,7 +102,8 @@ impl FoctetStream for QuicStream {
     }
 
     async fn send_frame(&mut self, frame: Frame) -> Result<()> {
-        let mut framed_writer = FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
+        let mut framed_writer =
+            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
         framed_writer.send(serialized_message.into()).await?;
 
@@ -123,20 +123,18 @@ impl FoctetStream for QuicStream {
                 }
                 Err(e) => {
                     //Safely cast the error to a quinn::ReadError
-                    match e.downcast::<quinn::ReadError>(){
-                        Ok(read_err) => {
-                            match read_err {
-                                quinn::ReadError::ClosedStream => {
-                                    tracing::info!("Stream closed by peer");
-                                }
-                                quinn::ReadError::ConnectionLost(_) => {
-                                    tracing::info!("Connection closed by peer");
-                                }
-                                _ => {
-                                    tracing::error!("Error reading from stream: {:?}", read_err);
-                                }
+                    match e.downcast::<quinn::ReadError>() {
+                        Ok(read_err) => match read_err {
+                            quinn::ReadError::ClosedStream => {
+                                tracing::info!("Stream closed by peer");
                             }
-                        }
+                            quinn::ReadError::ConnectionLost(_) => {
+                                tracing::info!("Connection closed by peer");
+                            }
+                            _ => {
+                                tracing::error!("Error reading from stream: {:?}", read_err);
+                            }
+                        },
                         Err(e) => {
                             tracing::error!("Error reading from stream: {:?}", e);
                         }
@@ -149,7 +147,8 @@ impl FoctetStream for QuicStream {
     }
 
     async fn send_file(&mut self, file_path: &std::path::Path) -> Result<()> {
-        let mut framed_writer = FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
+        let mut framed_writer =
+            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let mut file = tokio::fs::File::open(file_path).await?;
         let mut buffer = vec![0u8; self.send_buffer_size];
 
@@ -256,7 +255,10 @@ impl QuicConnection {
             next_operation_id: 0,
             remote_address: self.remote_address(),
         };
-        tracing::info!("Opened bi-directional stream with ID: {}", self.next_stream_id);
+        tracing::info!(
+            "Opened bi-directional stream with ID: {}",
+            self.next_stream_id
+        );
         self.next_stream_id.increment();
         Ok(quic_stream)
     }
@@ -264,21 +266,19 @@ impl QuicConnection {
     pub async fn accept_stream(&mut self) -> Result<QuicStream> {
         let (send_stream, recv_stream) = match self.connection.accept_bi().await {
             Ok(streams) => streams,
-            Err(e) => {
-                match e {
-                    quinn::ConnectionError::ApplicationClosed(_) => {
-                        self.state = ConnectionState::Disconnected;
-                        return Err(ConnectionError::Closed.into());
-                    }
-                    quinn::ConnectionError::ConnectionClosed(_) => {
-                        self.state = ConnectionState::Disconnected;
-                        return Err(ConnectionError::Closed.into());
-                    }
-                    _ => {
-                        return Err(anyhow!("Error accepting stream"));
-                    }
+            Err(e) => match e {
+                quinn::ConnectionError::ApplicationClosed(_) => {
+                    self.state = ConnectionState::Disconnected;
+                    return Err(ConnectionError::Closed.into());
                 }
-            }
+                quinn::ConnectionError::ConnectionClosed(_) => {
+                    self.state = ConnectionState::Disconnected;
+                    return Err(ConnectionError::Closed.into());
+                }
+                _ => {
+                    return Err(anyhow!("Error accepting stream"));
+                }
+            },
         };
         let quic_stream = QuicStream {
             send_stream: send_stream,
@@ -292,7 +292,10 @@ impl QuicConnection {
             next_operation_id: 0,
             remote_address: self.remote_address(),
         };
-        tracing::info!("Accepted bi-directional stream with ID: {}", self.next_stream_id);
+        tracing::info!(
+            "Accepted bi-directional stream with ID: {}",
+            self.next_stream_id
+        );
         self.next_stream_id.increment();
         Ok(quic_stream)
     }
@@ -322,8 +325,10 @@ impl QuicSocket {
     /// Creates a new QUIC socket with given node_id and config.
     /// The socket acts as both a client and a server.
     pub fn new(node_id: NodeId, config: SocketConfig) -> Result<Self> {
-        let client_config: ClientConfig = endpoint::make_client_config(config.tls_config.client_config.clone())?;
-        let server_config: ServerConfig = endpoint::make_server_config(config.tls_config.server_config.clone())?;
+        let client_config: ClientConfig =
+            endpoint::make_client_config(config.tls_config.client_config.clone())?;
+        let server_config: ServerConfig =
+            endpoint::make_server_config(config.tls_config.server_config.clone())?;
         let mut endpoint: Endpoint = Endpoint::server(server_config, config.server_addr)?;
         endpoint.set_default_client_config(client_config);
         Ok(Self {
@@ -344,7 +349,11 @@ impl QuicSocket {
             endpoint: endpoint,
         })
     }
-    pub async fn connect(&mut self, server_addr: SocketAddr, server_name: &str) -> Result<QuicConnection> {
+    pub async fn connect(
+        &mut self,
+        server_addr: SocketAddr,
+        server_name: &str,
+    ) -> Result<QuicConnection> {
         let connection = self.endpoint.connect(server_addr, server_name)?.await?;
         let quic_connection = QuicConnection::new(self.node_id.clone(), connection, &self.config);
         Ok(quic_connection)
@@ -354,7 +363,8 @@ impl QuicSocket {
         while let Some(incoming) = self.endpoint.accept().await {
             match incoming.await {
                 Ok(connection) => {
-                    let quic_connection = QuicConnection::new(self.node_id.clone(), connection, &self.config);
+                    let quic_connection =
+                        QuicConnection::new(self.node_id.clone(), connection, &self.config);
                     sender.send(quic_connection).await?;
                 }
                 Err(e) => {

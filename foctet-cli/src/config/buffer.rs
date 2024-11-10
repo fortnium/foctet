@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use foctet::core::default::{DEFAULT_READ_BUFFER_SIZE, DEFAULT_WRITE_BUFFER_SIZE};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BufferConfig {

@@ -1,4 +1,6 @@
-use foctet::core::default::{DEFAULT_CONNECTION_TIMEOUT, DEFAULT_RECEIVE_TIMEOUT, DEFAULT_SEND_TIMEOUT};
+use foctet::core::default::{
+    DEFAULT_CONNECTION_TIMEOUT, DEFAULT_RECEIVE_TIMEOUT, DEFAULT_SEND_TIMEOUT,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]

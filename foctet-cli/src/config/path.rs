@@ -1,7 +1,9 @@
-use foctet::core::default::{DEFAULT_CACHE_DIR, DEFAULT_LOG_DIR, DEFAULT_TEMP_DIR, DEFAULT_OUTPUT_DIR};
+use anyhow::Result;
+use foctet::core::default::{
+    DEFAULT_CACHE_DIR, DEFAULT_LOG_DIR, DEFAULT_OUTPUT_DIR, DEFAULT_TEMP_DIR,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use anyhow::Result;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PathConfig {

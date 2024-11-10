@@ -1,10 +1,10 @@
 use crate::default::{DEFAULT_HASH_BUFFER_SIZE, DEFAULT_HASH_LEN};
-use serde::{Serialize, Deserialize};
+use anyhow::Result;
 use blake3::{Hash, Hasher};
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io;
 use std::path::Path;
-use anyhow::Result;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Blake3Hash([u8; DEFAULT_HASH_LEN]);
@@ -41,7 +41,7 @@ impl Blake3Hash {
 
 pub fn calculate_hash(data: &[u8]) -> Result<Blake3Hash> {
     let hash = calculate_blake3_bytes_hash(data)?;
-    Ok(Blake3Hash::from_blake3_hash(hash))  
+    Ok(Blake3Hash::from_blake3_hash(hash))
 }
 
 pub fn calculate_file_hash(file_path: &Path) -> Result<Blake3Hash> {
@@ -49,10 +49,10 @@ pub fn calculate_file_hash(file_path: &Path) -> Result<Blake3Hash> {
     Ok(Blake3Hash::from_blake3_hash(hash))
 }
 
-/// Culculates the BLAKE3 hash of a byte array. 
+/// Culculates the BLAKE3 hash of a byte array.
 fn calculate_blake3_bytes_hash(data: &[u8]) -> io::Result<Hash> {
     let mut hasher = Hasher::new();
-    // Hash the data 
+    // Hash the data
     hasher.update(data);
     Ok(hasher.finalize())
 }

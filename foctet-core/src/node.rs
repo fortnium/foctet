@@ -1,8 +1,8 @@
-use std::{collections::BTreeSet, net::SocketAddr};
-use serde::{Deserialize, Serialize};
-use base64::{engine::general_purpose::URL_SAFE, Engine};
-use anyhow::Result;
 use crate::key::{self, NodePublicKey, UUID_V4_BYTES_LEN};
+use anyhow::Result;
+use base64::{engine::general_purpose::URL_SAFE, Engine};
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeSet, net::SocketAddr};
 
 /// The identifier for a node in the foctet network.
 /// This is the ED25519 public key of the node, with length 32 bytes.

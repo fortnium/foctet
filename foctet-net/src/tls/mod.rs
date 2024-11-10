@@ -3,17 +3,17 @@
 pub mod cert;
 pub mod key;
 
+use anyhow::Result;
 use cert::SkipServerVerification;
 use rustls::client::ClientConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::server::ServerConfig;
 use std::path::Path;
-use anyhow::Result;
 
 /// Generate a self-signed certificate and private key
 /// Returns a tuple of certificate chain and private key in DER format
 pub fn generate_self_signed_pair_der(
-    subject_alt_names: Vec<String>
+    subject_alt_names: Vec<String>,
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
     let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
@@ -24,7 +24,7 @@ pub fn generate_self_signed_pair_der(
 /// Generate a self-signed certificate and private key
 /// Returns a tuple of certificate chain and private key in PEM format
 pub fn generate_self_signed_pair_pem(
-    subject_alt_names: Vec<String>
+    subject_alt_names: Vec<String>,
 ) -> Result<(Vec<String>, String)> {
     let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
     let key = cert.key_pair.serialize_pem();

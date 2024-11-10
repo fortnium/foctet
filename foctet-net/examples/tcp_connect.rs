@@ -1,9 +1,9 @@
 use clap::Parser;
+use foctet_core::frame::{Frame, FrameType};
 use foctet_core::{frame::Payload, node::NodeId};
 use foctet_net::connection::{tcp::TcpSocket, FoctetStream};
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::net::SocketAddr;
-use foctet_core::frame::{Frame, FrameType};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -60,7 +60,10 @@ async fn main() -> Result<()> {
     let node_id = NodeId::generate();
 
     let mut tcp_socket = TcpSocket::new(node_id.clone(), socket_config)?;
-    match tcp_socket.connect(args.server_addr, &args.server_name).await {
+    match tcp_socket
+        .connect(args.server_addr, &args.server_name)
+        .await
+    {
         Ok(mut stream) => {
             // Connection
             tracing::info!("Connected to: {:?}", stream.remote_address());

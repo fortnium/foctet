@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 
-use clap::ArgMatches;
 use anyhow::Result;
+use clap::ArgMatches;
 use foctet::core::{addr::NamedSocketAddr, key::NodeKeyPair};
 
 pub fn handle(args: &ArgMatches) -> Result<()> {
@@ -17,7 +17,7 @@ pub fn handle(args: &ArgMatches) -> Result<()> {
         None => {
             tracing::error!("Failed to get subcommand matches");
             anyhow::bail!("Failed to get subcommand matches");
-        },
+        }
     };
     // [node]
     if sub_args.get_flag("node-id") {
@@ -26,7 +26,7 @@ pub fn handle(args: &ArgMatches) -> Result<()> {
             Ok(path) => {
                 config.node.node_id = key_pair.public_key().to_base64();
                 config.node.key_pair_path = path;
-            },
+            }
             Err(e) => {
                 tracing::error!("Failed to save node key pair: {}", e);
                 anyhow::bail!("Failed to save node key pair: {}", e);

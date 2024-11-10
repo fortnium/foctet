@@ -1,6 +1,6 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::net::{SocketAddr, ToSocketAddrs};
 use std::fmt;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -55,14 +55,17 @@ impl<'de> Deserialize<'de> for NamedSocketAddr {
     {
         let s = String::deserialize(deserializer)?;
         let mut parts = s.split(':');
-        
-        let host = parts.next().ok_or_else(|| serde::de::Error::custom("Missing host"))?.to_string();
+
+        let host = parts
+            .next()
+            .ok_or_else(|| serde::de::Error::custom("Missing host"))?
+            .to_string();
         let port = parts
             .next()
             .ok_or_else(|| serde::de::Error::custom("Missing port"))?
             .parse::<u16>()
             .map_err(|_| serde::de::Error::custom("Invalid port"))?;
-        
+
         Ok(NamedSocketAddr { host, port })
     }
 }
@@ -73,19 +76,17 @@ impl FromStr for NamedSocketAddr {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split(':');
-        let host = parts
-            .next()
-            .ok_or_else(|| "Missing host".to_string())?;
+        let host = parts.next().ok_or_else(|| "Missing host".to_string())?;
         let port = parts
             .next()
             .ok_or_else(|| "Missing port".to_string())?
             .parse::<u16>()
             .map_err(|_| "Invalid port".to_string())?;
-        
+
         if parts.next().is_some() {
             return Err("Too many parts, expected 'host:port' format".to_string());
         }
-        
+
         Ok(NamedSocketAddr::new(host, port))
     }
 }
@@ -111,9 +112,14 @@ mod tests {
     #[test]
     fn test_named_socket_addr_toml() {
         let addr = NamedSocketAddr::new("relay.foctet.net", 4433);
-        let test_config = TestConfig { named_socket_addr: addr };
+        let test_config = TestConfig {
+            named_socket_addr: addr,
+        };
         let serialized = toml::to_string(&test_config).unwrap();
-        assert_eq!(serialized, "named_socket_addr = \"relay.foctet.net:4433\"\n");
+        assert_eq!(
+            serialized,
+            "named_socket_addr = \"relay.foctet.net:4433\"\n"
+        );
         let deserialized: TestConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(deserialized, test_config);
     }

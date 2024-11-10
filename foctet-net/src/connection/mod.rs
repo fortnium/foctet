@@ -1,12 +1,15 @@
 pub mod endpoint;
-pub mod tcp;
 pub mod quic;
+pub mod tcp;
 
 use anyhow::Result;
+use foctet_core::{
+    frame::{Frame, StreamId},
+    node::ConnectionId,
+};
 use quic::QuicStream;
-use tcp::TlsTcpStream;
 use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
-use foctet_core::{frame::{Frame, StreamId}, node::ConnectionId};
+use tcp::TlsTcpStream;
 use tokio::sync::{Mutex, RwLock};
 
 #[derive(Debug)]
@@ -68,7 +71,7 @@ impl Session {
 pub trait FoctetStream {
     // Connection ID
     fn connection_id(&self) -> ConnectionId;
-    
+
     /// Stream ID
     fn stream_id(&self) -> StreamId;
 

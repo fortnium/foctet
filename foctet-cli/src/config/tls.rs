@@ -1,8 +1,8 @@
+use anyhow::Result;
 use foctet::core::default::{DEFAULT_CERT_FILE, DEFAULT_KEY_FILE, DEFAULT_TLS_DIR};
+use foctet::net::tls;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use anyhow::Result;
-use foctet::net::tls;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TlsConfig {
@@ -33,7 +33,8 @@ impl TlsConfig {
                         key_path,
                     });
                 } else {
-                    let (cert_chain, key) = tls::generate_self_signed_pair_pem(vec!["localhost".into()])?;
+                    let (cert_chain, key) =
+                        tls::generate_self_signed_pair_pem(vec!["localhost".into()])?;
                     // Save to file
                     std::fs::write(&cert_path, cert_chain.join("\n"))?;
                     std::fs::write(&key_path, key)?;

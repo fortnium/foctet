@@ -1,14 +1,14 @@
-use crate::frame::FileMetadata;
 use crate::default::DEFAULT_CONFIG_DIR;
+use crate::frame::FileMetadata;
 use crate::time::UnixTimestamp;
+use anyhow::anyhow;
+use anyhow::Result;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::fs::{metadata, File};
 use std::io;
 use std::path::{Path, PathBuf};
 use tar::Builder;
-use anyhow::Result;
-use anyhow::anyhow;
 
 /// Compresses a directory (recursively) into a .tar.gz archive
 pub fn compress_directory(dir_path: &Path, output_file: &Path) -> io::Result<()> {
@@ -44,7 +44,7 @@ pub fn get_file_metadata(path: &Path, is_compressed_dir: bool) -> Result<FileMet
     let created: UnixTimestamp = UnixTimestamp::from_system_time(file_metadata.created()?);
     let modified: UnixTimestamp = UnixTimestamp::from_system_time(file_metadata.modified()?);
     let accessed: UnixTimestamp = UnixTimestamp::from_system_time(file_metadata.accessed()?);
-    
+
     Ok(FileMetadata {
         name: name,
         size: file_metadata.len() as usize,

@@ -1,8 +1,8 @@
 mod app;
-mod sys;
 mod cli;
-mod handler;
 mod config;
+mod handler;
+mod sys;
 
 use app::AppCommands;
 use config::{config_file_exists, generate_default_config};
@@ -30,8 +30,11 @@ fn main() {
     if !config_file_exists() {
         match generate_default_config() {
             Ok(config_path) => {
-                tracing::info!("Generated default configuration file: {}", config_path.display());
-            },
+                tracing::info!(
+                    "Generated default configuration file: {}",
+                    config_path.display()
+                );
+            }
             Err(e) => {
                 eprintln!("Failed to generate default configuration file: {}", e);
                 std::process::exit(1);
@@ -42,7 +45,7 @@ fn main() {
     match config::load_config() {
         Ok(_) => {
             tracing::info!("Configuration file loaded");
-        },
+        }
         Err(e) => {
             eprintln!("Failed to load configuration file: {}", e);
             std::process::exit(1);
@@ -53,26 +56,22 @@ fn main() {
     let subcommand_name = matches.subcommand_name().unwrap_or("");
     let app_command = AppCommands::from_str(subcommand_name);
     match app_command {
-        Some(AppCommands::Config) => {
-            match handler::config::handle(&matches) {
-                Ok(_) => {
-                    tracing::info!("Configuration updated");
-                },
-                Err(e) => {
-                    tracing::error!("Failed to update configuration: {}", e);
-                    std::process::exit(1);
-                }
+        Some(AppCommands::Config) => match handler::config::handle(&matches) {
+            Ok(_) => {
+                tracing::info!("Configuration updated");
+            }
+            Err(e) => {
+                tracing::error!("Failed to update configuration: {}", e);
+                std::process::exit(1);
             }
         },
-        Some(AppCommands::Show) => {
-            match handler::show::handle(&matches) {
-                Ok(_) => {
-                    tracing::info!("Configuration shown");
-                },
-                Err(e) => {
-                    tracing::error!("Failed to show configuration: {}", e);
-                    std::process::exit(1);
-                }
+        Some(AppCommands::Show) => match handler::show::handle(&matches) {
+            Ok(_) => {
+                tracing::info!("Configuration shown");
+            }
+            Err(e) => {
+                tracing::error!("Failed to show configuration: {}", e);
+                std::process::exit(1);
             }
         },
         Some(AppCommands::Send) => {
@@ -80,51 +79,51 @@ fn main() {
             match handler::send::handle(&matches) {
                 Ok(_) => {
                     tracing::info!("File sent");
-                },
+                }
                 Err(e) => {
                     tracing::error!("Failed to send file: {}", e);
                     std::process::exit(1);
                 }
             }
-        },
+        }
         Some(AppCommands::Receive) => {
             println!("Receive command");
             match handler::receive::handle(&matches) {
                 Ok(_) => {
                     tracing::info!("File received");
-                },
+                }
                 Err(e) => {
                     tracing::error!("Failed to receive file: {}", e);
                     std::process::exit(1);
                 }
             }
-        },
+        }
         Some(AppCommands::Connect) => {
             println!("Connect command");
             match handler::connect::handle(&matches) {
                 Ok(_) => {
                     tracing::info!("Connection closed");
-                },
+                }
                 Err(e) => {
                     tracing::error!("Failed to connect to server: {}", e);
                     std::process::exit(1);
                 }
             }
-        },
+        }
         Some(AppCommands::Listen) => {
             println!("Listen command");
             match handler::listen::handle(&matches) {
                 Ok(_) => {
                     tracing::info!("Server stopped");
-                },
+                }
                 Err(e) => {
                     tracing::error!("Failed to listen for incoming connections: {}", e);
                     std::process::exit(1);
                 }
             }
-        },
+        }
         None => {
             println!("No command");
-        },
-    }   
+        }
+    }
 }

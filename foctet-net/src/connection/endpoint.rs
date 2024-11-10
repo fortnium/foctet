@@ -1,6 +1,7 @@
 //! Module for creating QUIC endpoints.
 
 use crate::tls::cert::SkipServerVerification;
+use anyhow::Result;
 use foctet_core::default::DEFAULT_KEEP_ALIVE_INTERVAL;
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{ClientConfig, Endpoint, ServerConfig};
@@ -11,7 +12,6 @@ use rustls::ServerConfig as RustlsServerConfig;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use anyhow::Result;
 
 /// Create quinn client config from rustls client config
 pub fn make_client_config(client_config: RustlsClientConfig) -> Result<ClientConfig> {
@@ -22,9 +22,8 @@ pub fn make_client_config(client_config: RustlsClientConfig) -> Result<ClientCon
 
 /// Create quinn server config from rustls server config
 pub fn make_server_config(server_config: RustlsServerConfig) -> Result<ServerConfig> {
-    let mut quic_server_config = ServerConfig::with_crypto(Arc::new(
-        QuicServerConfig::try_from(server_config)?,
-    ));
+    let mut quic_server_config =
+        ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_config)?));
     let transport_config = Arc::get_mut(&mut quic_server_config.transport).unwrap();
     transport_config.keep_alive_interval(Some(DEFAULT_KEEP_ALIVE_INTERVAL));
     Ok(quic_server_config)
@@ -36,10 +35,7 @@ pub fn make_server_config(server_config: RustlsServerConfig) -> Result<ServerCon
 /// - bind_addr: the address to bind the client endpoint to.
 ///
 /// - server_certs: list of trusted certificates.
-pub fn make_client_endpoint(
-    bind_addr: SocketAddr,
-    server_certs: &[&[u8]],
-) -> Result<Endpoint> {
+pub fn make_client_endpoint(bind_addr: SocketAddr, server_certs: &[&[u8]]) -> Result<Endpoint> {
     let client_cfg = configure_client(server_certs)?;
     let mut endpoint = Endpoint::client(bind_addr)?;
     endpoint.set_default_client_config(client_cfg);
