@@ -14,6 +14,7 @@ use anyhow::anyhow;
 use crate::config::SocketConfig;
 use super::{endpoint, FoctetStream};
 
+#[derive(Debug)]
 pub struct QuicStream {
     pub send_stream: SendStream,
     pub recv_stream: RecvStream,

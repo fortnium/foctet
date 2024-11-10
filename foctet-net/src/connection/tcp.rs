@@ -11,9 +11,9 @@ use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
 use anyhow::Result;
 use crate::config::SocketConfig;
-
 use super::FoctetStream;
 
+#[derive(Debug)]
 pub struct TlsTcpStream {
     pub stream: TlsStream<TcpStream>,
     pub node_id: NodeId,

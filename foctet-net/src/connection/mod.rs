@@ -5,8 +5,64 @@ pub mod quic;
 use anyhow::Result;
 use quic::QuicStream;
 use tcp::TlsTcpStream;
-use std::{net::SocketAddr, path::Path};
+use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
 use foctet_core::{frame::{Frame, StreamId}, node::ConnectionId};
+use tokio::sync::{Mutex, RwLock};
+
+#[derive(Debug)]
+pub struct StreamMap {
+    streams: Arc<RwLock<HashMap<StreamId, Arc<Mutex<NetworkStream>>>>>,
+}
+
+impl StreamMap {
+    pub fn new() -> Self {
+        Self {
+            streams: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub async fn add_stream(&self, stream_id: StreamId, stream: Arc<Mutex<NetworkStream>>) {
+        let mut streams = self.streams.write().await;
+        streams.insert(stream_id, stream);
+    }
+
+    pub async fn get_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
+        let streams = self.streams.read().await;
+        streams.get(stream_id).cloned()
+    }
+
+    pub async fn remove_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
+        let mut streams = self.streams.write().await;
+        streams.remove(stream_id)
+    }
+}
+
+#[derive(Debug)]
+pub struct Session {
+    pub connection_id: ConnectionId,
+    pub stream_map: StreamMap,
+}
+
+impl Session {
+    pub fn new(connection_id: ConnectionId) -> Self {
+        Self {
+            connection_id,
+            stream_map: StreamMap::new(),
+        }
+    }
+
+    pub async fn add_stream(&self, stream_id: StreamId, stream: Arc<Mutex<NetworkStream>>) {
+        self.stream_map.add_stream(stream_id, stream).await;
+    }
+
+    pub async fn get_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
+        self.stream_map.get_stream(stream_id).await
+    }
+
+    pub async fn remove_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
+        self.stream_map.remove_stream(stream_id).await
+    }
+}
 
 #[allow(async_fn_in_trait)]
 pub trait FoctetStream {
@@ -44,6 +100,7 @@ pub trait FoctetStream {
     fn remote_address(&self) -> SocketAddr;
 }
 
+#[derive(Debug)]
 pub enum NetworkStream {
     Quic(QuicStream),
     Tcp(TlsTcpStream),
