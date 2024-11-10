@@ -77,6 +77,11 @@ impl NodeAddr {
         let serialized = bincode::serialize(self)?;
         Ok(URL_SAFE.encode(&serialized))
     }
+    /// Get socket address.
+    /// Returns the first socket address in the set.
+    pub fn get_socket_addr(&self) -> Option<SocketAddr> {
+        self.socket_addresses.iter().next().cloned()
+    }
 }
 
 /// The connection ID for a connection.
@@ -100,6 +105,17 @@ impl ConnectionId {
     /// Check if the connection ID is empty.
     pub fn is_zero(&self) -> bool {
         self.0.iter().all(|&x| x == 0)
+    }
+    /// Converts a base64 string into a ConnectionId.
+    pub fn from_base64(encoded: &str) -> Result<Self> {
+        let decoded = URL_SAFE.decode(encoded)?;
+        let node_addr: Self = bincode::deserialize(&decoded)?;
+        Ok(node_addr)
+    }
+    /// Converts the ConnectionId to a single base64 string.
+    pub fn to_base64(&self) -> Result<String> {
+        let serialized = bincode::serialize(self)?;
+        Ok(URL_SAFE.encode(&serialized))
     }
 }
 

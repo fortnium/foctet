@@ -49,6 +49,10 @@ pub struct TransferTicket {
 }
 
 impl TransferTicket {
+    /// Create a new transfer ticket with the given node address and content ID.
+    pub fn new(node_addr: NodeAddr, content_id: ContentId) -> Self {
+        Self { node_addr, content_id }
+    }
     /// Converts a base64 string into a TransferTicket.
     pub fn from_base64(encoded: &str) -> Result<Self> {
         let decoded = URL_SAFE.decode(encoded)?;
