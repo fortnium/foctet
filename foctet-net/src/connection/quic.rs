@@ -121,7 +121,25 @@ impl FoctetStream for QuicStream {
                     return Ok(frame);
                 }
                 Err(e) => {
-                    tracing::error!("Error reading from stream: {:?}", e);
+                    //Safely cast the error to a quinn::ReadError
+                    match e.downcast::<quinn::ReadError>(){
+                        Ok(read_err) => {
+                            match read_err {
+                                quinn::ReadError::ClosedStream => {
+                                    tracing::info!("Stream closed by peer");
+                                }
+                                quinn::ReadError::ConnectionLost(_) => {
+                                    tracing::info!("Connection closed by peer");
+                                }
+                                _ => {
+                                    tracing::error!("Error reading from stream: {:?}", read_err);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Error reading from stream: {:?}", e);
+                        }
+                    }
                     break;
                 }
             }
