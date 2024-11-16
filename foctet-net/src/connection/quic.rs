@@ -158,9 +158,8 @@ impl FoctetStream for QuicStream {
                 break;
             }
             let chunk = Payload::FileChunk(buffer[..n].to_vec());
-            let is_last_frame = n < self.send_buffer_size;
             let frame: Frame = Frame::builder()
-                .with_fin(is_last_frame)
+                .with_fin(false)
                 .with_frame_type(FrameType::FileTransfer)
                 .with_operation_id(self.next_operation_id)
                 .with_payload(chunk)
@@ -168,6 +167,15 @@ impl FoctetStream for QuicStream {
             let serialized_message = frame.to_bytes()?;
             framed_writer.send(serialized_message.into()).await?;
         }
+
+        // Send the last frame with the FIN flag and NO payload
+        let frame: Frame = Frame::builder()
+            .with_fin(true)
+            .with_frame_type(FrameType::FileTransfer)
+            .with_operation_id(self.next_operation_id)
+            .build();
+        let serialized_message = frame.to_bytes()?;
+        framed_writer.send(serialized_message.into()).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
