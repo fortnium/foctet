@@ -12,8 +12,8 @@ use foctet_net::connection::{
 use foctet_net::{config::SocketConfig, tls::TlsConfig};
 use std::path::PathBuf;
 use std::{
-    collections::{BTreeSet, HashMap},
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    collections::HashMap,
+    net::SocketAddr,
     sync::OnceLock,
 };
 use tokio::sync::{mpsc, RwLock};
@@ -90,26 +90,10 @@ async fn main() -> Result<()> {
         .with_max_read_buffer_size()
         .with_max_write_buffer_size();
 
-    let mut addrs: BTreeSet<SocketAddr> = BTreeSet::new();
-    if args.server_addr == foctet_core::default::DEFAULT_SERVER_V4_ADDR {
-        addrs.insert(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            args.server_addr.port(),
-        ));
-        let default_interface = netdev::get_default_interface().unwrap();
-        for ipv4addr in default_interface.ipv4 {
-            addrs.insert(SocketAddr::new(
-                IpAddr::V4(ipv4addr.addr()),
-                args.server_addr.port(),
-            ));
-        }
-    } else {
-        addrs.insert(args.server_addr);
-    }
-
     let node_id = NodeId::generate();
+    let node_addr = NodeAddr::new(node_id.clone()).with_socket_addresses(socket_config.server_addresses());
 
-    let mut quic_socket = QuicSocket::new(node_id.clone(), socket_config)?;
+    let mut quic_socket = QuicSocket::new(node_id, socket_config)?;
 
     let (conn_tx, mut conn_rx) = mpsc::channel::<QuicConnection>(100);
     tracing::info!("Starting QUIC listener...");
@@ -125,7 +109,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    let node_addr = NodeAddr::new(node_id.clone()).with_socket_addresses(addrs);
     let content_id = ContentId::new();
 
     for addr in &node_addr.socket_addresses {
