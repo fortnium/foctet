@@ -34,13 +34,19 @@ pub const DEFAULT_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(20);
 pub const DEFAULT_MAX_RETRIES: usize = 3;
 
 pub const DEFAULT_BIND_PORT: u16 = 0;
+pub const LOCALHOST_BIND_V4_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 pub const DEFAULT_BIND_V4_ADDR: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), DEFAULT_BIND_PORT);
+pub const LOCALHOST_BIND_V6_ADDR: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0);
 pub const DEFAULT_BIND_V6_ADDR: SocketAddr =
     SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEFAULT_BIND_PORT);
 pub const DEFAULT_SERVER_PORT: u16 = 4432;
+pub const LOCALHOST_SERVER_V4_ADDR: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DEFAULT_SERVER_PORT);
 pub const DEFAULT_SERVER_V4_ADDR: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), DEFAULT_SERVER_PORT);
+pub const LOCALHOST_SERVER_V6_ADDR: SocketAddr =
+    SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), DEFAULT_SERVER_PORT);
 pub const DEFAULT_SERVER_V6_ADDR: SocketAddr =
     SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEFAULT_SERVER_PORT);
 pub const DEFAULT_RELAY_SERVER_HOST_ADDR: &str = "relay.foctet.net";
