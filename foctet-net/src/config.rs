@@ -1,3 +1,4 @@
+use crate::device;
 use crate::socket::SocketType;
 use crate::tls::TlsConfig;
 use anyhow::anyhow;
@@ -10,6 +11,8 @@ use foctet_core::default::{
     DEFAULT_READ_BUFFER_SIZE, DEFAULT_SEND_TIMEOUT, MAX_READ_BUFFER_SIZE, MAX_WRITE_BUFFER_SIZE,
     MIN_READ_BUFFER_SIZE, MIN_WRITE_BUFFER_SIZE,
 };
+use std::collections::BTreeSet;
+use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -174,5 +177,30 @@ impl SocketConfig {
     /// Returns the read buffer size.
     pub fn read_buffer_size(&self) -> usize {
         self.read_buffer_size
+    }
+    /// Returns the server addresses.
+    /// If the server address is unspecified, it returns the default server addresses.
+    /// Otherwise, it returns the server address.
+    /// If the server address is IPv4 unspecified, it returns the default IPv4 server addresses.
+    /// If the server address is IPv6 unspecified, it returns the default server addresses, both IPv4 and IPv6 for dual-stack.
+    pub fn server_addresses(&self) -> BTreeSet<SocketAddr> {
+        let mut addrs = BTreeSet::new();
+        match self.server_addr.ip() {
+            IpAddr::V4(ipv4addr) => {
+                if ipv4addr.is_unspecified() {
+                    addrs = device::get_default_ipv4_server_addrs();
+                } else {
+                    addrs.insert(self.server_addr);
+                }
+            },
+            IpAddr::V6(ipv6addr) => {
+                if ipv6addr.is_unspecified() {
+                    addrs = device::get_default_server_addrs();
+                } else {
+                    addrs.insert(self.server_addr);
+                }
+            },
+        }
+        addrs
     }
 }
