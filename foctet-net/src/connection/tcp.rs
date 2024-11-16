@@ -1,5 +1,5 @@
 use super::FoctetStream;
-use crate::config::SocketConfig;
+use crate::socket::SocketConfig;
 use anyhow::Result;
 use foctet_core::error::StreamError;
 use foctet_core::frame::{Frame, FrameType, Payload, StreamId};

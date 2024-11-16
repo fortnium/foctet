@@ -8,7 +8,7 @@ use foctet_net::connection::{
     quic::{QuicConnection, QuicSocket},
     FoctetStream,
 };
-use foctet_net::{config::SocketConfig, tls::TlsConfig};
+use foctet_net::{socket::SocketConfig, tls::TlsConfig};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::sync::mpsc;

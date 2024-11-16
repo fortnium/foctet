@@ -2,7 +2,7 @@ use clap::Parser;
 use foctet_core::frame::{Frame, FrameType};
 use foctet_core::{frame::Payload, node::NodeId};
 use foctet_net::connection::{quic::QuicSocket, FoctetStream};
-use foctet_net::{config::SocketConfig, tls::TlsConfig};
+use foctet_net::{socket::SocketConfig, tls::TlsConfig};
 use std::net::SocketAddr;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;

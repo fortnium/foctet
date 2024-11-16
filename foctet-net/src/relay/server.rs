@@ -6,7 +6,7 @@ use std::{
 use foctet_core::node::{ConnectionId, NodeAddr, NodeId};
 use tokio::sync::RwLock;
 
-use crate::{config::SocketConfig, connection::Session};
+use crate::{socket::SocketConfig, connection::Session};
 
 pub struct RelayServer {
     pub node_addr: NodeAddr,

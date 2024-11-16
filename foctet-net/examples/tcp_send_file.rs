@@ -9,7 +9,7 @@ use foctet_net::connection::{
     tcp::{TcpSocket, TlsTcpStream},
     FoctetStream,
 };
-use foctet_net::{config::SocketConfig, tls::TlsConfig};
+use foctet_net::{socket::SocketConfig, tls::TlsConfig};
 use std::path::PathBuf;
 use std::{
     collections::HashMap,

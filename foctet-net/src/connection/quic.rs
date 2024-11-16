@@ -1,5 +1,5 @@
 use super::{endpoint, FoctetStream};
-use crate::config::SocketConfig;
+use crate::socket::SocketConfig;
 use anyhow::anyhow;
 use anyhow::Result;
 use foctet_core::error::{ConnectionError, StreamError};
