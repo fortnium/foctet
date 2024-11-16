@@ -19,12 +19,12 @@ use tokio::sync::mpsc;
 /// The type of socket and transport protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SocketType {
+    /// Both QUIC and TCP (default)
+    Both,
     /// QUIC socket
     Quic,
     /// TCP socket
     Tcp,
-    /// Both QUIC and TCP (default)
-    Both,
 }
 
 impl Default for SocketType {
