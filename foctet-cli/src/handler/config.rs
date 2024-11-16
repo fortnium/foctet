@@ -24,7 +24,7 @@ pub fn handle(args: &ArgMatches) -> Result<()> {
         let key_pair = NodeKeyPair::generate();
         match key_pair.save_to_default_file() {
             Ok(path) => {
-                config.node.node_id = key_pair.public_key().to_base64();
+                config.node.node_id = key_pair.public_key().to_base32()?;
                 config.node.key_pair_path = path;
             }
             Err(e) => {

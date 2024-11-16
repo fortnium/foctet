@@ -1,6 +1,6 @@
 use crate::key::{self, NodePublicKey, UUID_V4_BYTES_LEN};
 use anyhow::Result;
-use base64::{engine::general_purpose::URL_SAFE, Engine};
+use base32::Alphabet;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, net::SocketAddr};
 
@@ -66,16 +66,17 @@ impl NodeAddr {
     pub fn is_unspecified(&self) -> bool {
         self.node_id.is_zero()
     }
-    /// Converts a base64 string into a NodeAddr.
-    pub fn from_base64(encoded: &str) -> Result<Self> {
-        let decoded = URL_SAFE.decode(encoded)?;
+    /// Converts a RFC4648 base32 string into a ContentId.
+    pub fn from_base32(encoded: &str) -> Result<Self> {
+        let decoded = base32::decode(Alphabet::Rfc4648 { padding: false }, encoded)
+            .ok_or_else(|| anyhow::anyhow!("Failed to decode base32 string"))?;
         let node_addr: Self = bincode::deserialize(&decoded)?;
         Ok(node_addr)
     }
-    /// Converts the NodeAddr to a single base64 string.
-    pub fn to_base64(&self) -> Result<String> {
+    /// Converts the ContentId to a single RFC4648 base32 string.
+    pub fn to_base32(&self) -> Result<String> {
         let serialized = bincode::serialize(self)?;
-        Ok(URL_SAFE.encode(&serialized))
+        Ok(base32::encode(Alphabet::Rfc4648 { padding: false }, &serialized))
     }
     /// Get socket address.
     /// Returns the first socket address in the set.
@@ -106,16 +107,17 @@ impl ConnectionId {
     pub fn is_zero(&self) -> bool {
         self.0.iter().all(|&x| x == 0)
     }
-    /// Converts a base64 string into a ConnectionId.
-    pub fn from_base64(encoded: &str) -> Result<Self> {
-        let decoded = URL_SAFE.decode(encoded)?;
+    /// Converts a RFC4648 base32 string into a ContentId.
+    pub fn from_base32(encoded: &str) -> Result<Self> {
+        let decoded = base32::decode(Alphabet::Rfc4648 { padding: false }, encoded)
+            .ok_or_else(|| anyhow::anyhow!("Failed to decode base32 string"))?;
         let node_addr: Self = bincode::deserialize(&decoded)?;
         Ok(node_addr)
     }
-    /// Converts the ConnectionId to a single base64 string.
-    pub fn to_base64(&self) -> Result<String> {
+    /// Converts the ContentId to a single RFC4648 base32 string.
+    pub fn to_base32(&self) -> Result<String> {
         let serialized = bincode::serialize(self)?;
-        Ok(URL_SAFE.encode(&serialized))
+        Ok(base32::encode(Alphabet::Rfc4648 { padding: false }, &serialized))
     }
 }
 
@@ -204,9 +206,9 @@ mod tests {
         let node_addr = NodeAddr::new(node_id)
             .with_socket_addr(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4432)));
         println!("NodeAddr: {:?}", node_addr);
-        let id = node_addr.to_base64().unwrap();
+        let id = node_addr.to_base32().unwrap();
         println!("NodeAddr ID: {}", id);
-        let node_addr2 = NodeAddr::from_base64(&id).unwrap();
+        let node_addr2 = NodeAddr::from_base32(&id).unwrap();
         println!("NodeAddr2: {:?}", node_addr2);
         assert_eq!(node_addr, node_addr2);
     }

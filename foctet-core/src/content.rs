@@ -3,7 +3,7 @@ use crate::{
     node::NodeAddr,
 };
 use anyhow::Result;
-use base64::{engine::general_purpose::URL_SAFE, Engine};
+use base32::Alphabet;
 use serde::{Deserialize, Serialize};
 
 /// The content ID for a payload
@@ -32,16 +32,17 @@ impl ContentId {
     pub fn is_zero(&self) -> bool {
         self.0.iter().all(|&x| x == 0)
     }
-    /// Converts a base64 string into a ContentId.
-    pub fn from_base64(encoded: &str) -> Result<Self> {
-        let decoded = URL_SAFE.decode(encoded)?;
+    /// Converts a RFC4648 base32 string into a ContentId.
+    pub fn from_base32(encoded: &str) -> Result<Self> {
+        let decoded = base32::decode(Alphabet::Rfc4648 { padding: false }, encoded)
+            .ok_or_else(|| anyhow::anyhow!("Failed to decode base32 string"))?;
         let node_addr: Self = bincode::deserialize(&decoded)?;
         Ok(node_addr)
     }
-    /// Converts the ContentId to a single base64 string.
-    pub fn to_base64(&self) -> Result<String> {
+    /// Converts the ContentId to a single RFC4648 base32 string.
+    pub fn to_base32(&self) -> Result<String> {
         let serialized = bincode::serialize(self)?;
-        Ok(URL_SAFE.encode(&serialized))
+        Ok(base32::encode(Alphabet::Rfc4648 { padding: false }, &serialized))
     }
 }
 
@@ -59,15 +60,16 @@ impl TransferTicket {
             content_id,
         }
     }
-    /// Converts a base64 string into a TransferTicket.
-    pub fn from_base64(encoded: &str) -> Result<Self> {
-        let decoded = URL_SAFE.decode(encoded)?;
+    /// Converts a RFC4648 base32 string into a ContentId.
+    pub fn from_base32(encoded: &str) -> Result<Self> {
+        let decoded = base32::decode(Alphabet::Rfc4648 { padding: false }, encoded)
+            .ok_or_else(|| anyhow::anyhow!("Failed to decode base32 string"))?;
         let node_addr: Self = bincode::deserialize(&decoded)?;
         Ok(node_addr)
     }
-    /// Converts the TransferTicket to a single base64 string.
-    pub fn to_base64(&self) -> Result<String> {
+    /// Converts the ContentId to a single RFC4648 base32 string.
+    pub fn to_base32(&self) -> Result<String> {
         let serialized = bincode::serialize(self)?;
-        Ok(URL_SAFE.encode(&serialized))
+        Ok(base32::encode(Alphabet::Rfc4648 { padding: false }, &serialized))
     }
 }

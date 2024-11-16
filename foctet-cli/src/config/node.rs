@@ -37,15 +37,15 @@ impl NodeConfig {
         if !key_pair_path.exists() {
             // Generate key pair
             let key_pair = NodeKeyPair::generate();
-            key_pair.save_to_default_file().unwrap();
+            key_pair.save_to_default_file()?;
             Ok(Self {
-                node_id: key_pair.public_key().to_base64(),
+                node_id: key_pair.public_key().to_base32()?,
                 key_pair_path: key_pair_path,
             })
         } else {
-            let key_pair = NodeKeyPair::load_from_default_file().unwrap();
+            let key_pair = NodeKeyPair::load_from_default_file()?;
             Ok(Self {
-                node_id: key_pair.public_key().to_base64(),
+                node_id: key_pair.public_key().to_base32()?,
                 key_pair_path: key_pair_path,
             })
         }

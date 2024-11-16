@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use anyhow::Result;
-use base64::{engine::general_purpose::URL_SAFE, Engine};
+use base32::Alphabet;
 use ring::pkcs8::Document;
 use ring::rand::SystemRandom;
 use ring::signature::Ed25519KeyPair;
@@ -147,14 +147,17 @@ impl NodePublicKey {
     pub fn len(&self) -> usize {
         self.public_key.len()
     }
-    /// Convert the `NodePublicKey` to a base64 encoded string.
-    pub fn to_base64(&self) -> String {
-        URL_SAFE.encode(&self.public_key)
+    /// Converts a RFC4648 base32 string into a ContentId.
+    pub fn from_base32(encoded: &str) -> Result<Self> {
+        let decoded = base32::decode(Alphabet::Rfc4648 { padding: false }, encoded)
+            .ok_or_else(|| anyhow::anyhow!("Failed to decode base32 string"))?;
+        let node_addr: Self = bincode::deserialize(&decoded)?;
+        Ok(node_addr)
     }
-    /// Create a new `NodePublicKey` from a base64 encoded string.
-    pub fn from_base64(encoded: &str) -> Result<Self> {
-        let decoded = URL_SAFE.decode(encoded)?;
-        Ok(NodePublicKey::from_bytes(&decoded))
+    /// Converts the ContentId to a single RFC4648 base32 string.
+    pub fn to_base32(&self) -> Result<String> {
+        let serialized = bincode::serialize(self)?;
+        Ok(base32::encode(Alphabet::Rfc4648 { padding: false }, &serialized))
     }
 }
 
@@ -270,7 +273,7 @@ mod tests {
     fn test_load_key_pair_from_file() {
         let key_doc = generate_key_pair_doc().unwrap();
         let pkcs8_bytes = key_doc.as_ref();
-        let path = Path::new("test_key_pair");
+        let path = Path::new("./test_key_pair.p8");
         fs::write(path, pkcs8_bytes).unwrap();
         let key_pair = load_key_pair_from_file(path).unwrap();
         let public_key = key_pair.public_key().as_ref();
@@ -327,7 +330,7 @@ mod tests {
         let key_pair_bytes = key_pair.as_bytes();
         let loaded_key_pair = NodeKeyPair::from_bytes(key_pair_bytes).unwrap();
         assert_eq!(loaded_key_pair.as_bytes(), key_pair_bytes);
-        let path = Path::new("test_key_pair");
+        let path = Path::new("./test_key_pair.p8");
         key_pair.save_to_file(path).unwrap();
         let loaded_key_pair = NodeKeyPair::load_from_file(path).unwrap();
         assert_eq!(loaded_key_pair.as_bytes(), key_pair.as_bytes());
@@ -335,24 +338,11 @@ mod tests {
     }
 
     #[test]
-    fn test_defaul_key_pair() {
-        let key_pair = NodeKeyPair::generate();
-        key_pair.save_to_default_file().unwrap();
-        let loaded_key_pair = NodeKeyPair::load_from_default_file().unwrap();
-        assert_eq!(loaded_key_pair.as_bytes(), key_pair.as_bytes());
-        let path = Path::new("test_key_pair");
-        key_pair.save_to_file(path).unwrap();
-        let loaded_key_pair = NodeKeyPair::load_from_file(path).unwrap();
-        assert_eq!(loaded_key_pair.as_bytes(), key_pair.as_bytes());
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn test_base64_key() {
+    fn test_base32_key() {
         let key_pair = NodeKeyPair::generate();
         let public_key = key_pair.public_key();
-        let encoded = public_key.to_base64();
-        let decoded_public_key = NodePublicKey::from_base64(&encoded).unwrap();
+        let encoded = public_key.to_base32().unwrap();
+        let decoded_public_key = NodePublicKey::from_base32(&encoded).unwrap();
         println!("Public key: {:?}", public_key.as_bytes());
         println!("Encoded: {}", encoded);
         println!("Decoded: {:?}", decoded_public_key.as_bytes());

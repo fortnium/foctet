@@ -67,8 +67,8 @@ async fn main() -> Result<()> {
         .with_max_read_buffer_size()
         .with_max_write_buffer_size();
 
-    let ticket_base64: String = args.ticket;
-    let ticket: TransferTicket = TransferTicket::from_base64(&ticket_base64)?;
+    let ticket_base32: String = args.ticket;
+    let ticket: TransferTicket = TransferTicket::from_base32(&ticket_base32)?;
     let addr: SocketAddr = ticket
         .node_addr
         .get_socket_addr()

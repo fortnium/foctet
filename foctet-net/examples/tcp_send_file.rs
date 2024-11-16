@@ -152,8 +152,8 @@ async fn main() -> Result<()> {
         .insert(content_id.clone(), args.file_path.clone());
 
     let ticket = TransferTicket::new(node_addr, content_id);
-    let ticket_base64 = ticket.to_base64()?;
-    tracing::info!("Share this ticket with the receiver: {}", ticket_base64);
+    let ticket_base32 = ticket.to_base32()?;
+    tracing::info!("Share this ticket with the receiver: {}", ticket_base32);
 
     while let Some(mut stream) = stream_rx.recv().await {
         tracing::info!("New connection: {:?}", stream.remote_address());
