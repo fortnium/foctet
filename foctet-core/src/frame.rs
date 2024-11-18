@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 use crate::{
     content::ContentId,
@@ -17,7 +17,7 @@ pub struct Frame {
     pub frame_type: FrameType,
     /// A unique identifier for the operation, allowing tracking of individual send/receive operations.
     /// This ID can be used for error handling, retransmissions, and associating responses with requests.
-    pub operation_id: u64,
+    pub operation_id: OperationId,
     /// Flags providing additional information about the frame.
     /// Each bit in this field can represent a specific flag, such as indicating fragmentation, priority, or compression.
     pub flags: u8,
@@ -33,7 +33,7 @@ impl Frame {
         Self {
             fin: false,
             frame_type: FrameType::Text,
-            operation_id: 0,
+            operation_id: OperationId(0),
             flags: 0,
             payload: None,
         }
@@ -70,7 +70,7 @@ pub struct FrameBuilder {
     frame_type: FrameType,
     /// A unique identifier for the operation, allowing tracking of individual send/receive operations.
     /// This ID can be used for error handling, retransmissions, and associating responses with requests.
-    operation_id: u64,
+    operation_id: OperationId,
     /// Flags providing additional information about the frame.
     /// Each bit in this field can represent a specific flag, such as indicating fragmentation, priority, or compression.
     flags: u8,
@@ -86,7 +86,7 @@ impl FrameBuilder {
         Self {
             fin: false,
             frame_type: FrameType::Text,
-            operation_id: 0,
+            operation_id: OperationId(0),
             flags: 0,
             payload: None,
         }
@@ -102,7 +102,7 @@ impl FrameBuilder {
         self
     }
     /// Sets the operation ID.
-    pub fn with_operation_id(mut self, operation_id: u64) -> Self {
+    pub fn with_operation_id(mut self, operation_id: OperationId) -> Self {
         self.operation_id = operation_id;
         self
     }
@@ -174,6 +174,39 @@ impl fmt::Display for StreamId {
         write!(f, "StreamId({})", self.0)
     }
 }
+
+/// Identifier for a operation within a particular stream
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct OperationId(pub u64);
+
+impl OperationId {
+    /// Create a new operation ID
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
+    /// Get the operation ID as a string
+    pub fn as_str(&self) -> String {
+        self.0.to_string()
+    }
+    /// Increment the operation ID by one
+    pub fn increment(&mut self) {
+        self.0 += 1;
+    }
+    /// Decrement the operation ID by one
+    /// If the operation ID is zero, it will remain zero.
+    pub fn decrement(&mut self) {
+        if self.0 > 0 {
+            self.0 -= 1;
+        }
+    }
+}
+
+impl fmt::Display for OperationId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "OperationId({})", self.0)
+    }
+}
+
 
 /// Represents the payload of the message
 ///
@@ -260,6 +293,22 @@ pub struct Metadata {
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct FileMetadata {
     pub name: String,
+    pub size: usize,
+    pub hash: Blake3Hash,
+    pub is_directory: bool,
+    /// File created timestamp in Unix time
+    pub created: UnixTimestamp,
+    /// File modified timestamp in Unix time
+    pub modified: UnixTimestamp,
+    /// File accessed timestamp in Unix time
+    pub accessed: UnixTimestamp,
+}
+
+/// Represents the metadata of the file or compressed directory
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct LocalFileMetadata {
+    pub name: String,
+    pub path: PathBuf,
     pub size: usize,
     pub hash: Blake3Hash,
     pub is_directory: bool,
