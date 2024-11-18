@@ -1,4 +1,5 @@
 pub mod actor;
+
 use foctet_core::default::{
     DEFAULT_BIND_V4_ADDR, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_MAX_RETRIES, DEFAULT_RECEIVE_TIMEOUT,
     DEFAULT_SERVER_V4_ADDR, DEFAULT_WRITE_BUFFER_SIZE,
@@ -7,23 +8,28 @@ use foctet_core::default::{
     DEFAULT_READ_BUFFER_SIZE, DEFAULT_SEND_TIMEOUT, MAX_READ_BUFFER_SIZE, MAX_WRITE_BUFFER_SIZE,
     MIN_READ_BUFFER_SIZE, MIN_WRITE_BUFFER_SIZE,
 };
+use foctet_core::node::ConnectionId;
+use crate::connection::Session;
 use crate::device;
+use crate::message::{ActorMessage, RelayActorMessage};
 use crate::tls::TlsConfig;
 use crate::connection::{
     quic::{QuicConnection, QuicSocket},
     tcp::{TcpSocket, TlsTcpStream},
     FoctetStream,
 };
+
 use anyhow::Result;
 use anyhow::anyhow;
 use foctet_core::{
     error::ConnectionError,
     node::{NodeAddr, NodeId},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 use std::path::PathBuf;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, SocketAddr};
 
 /// The type of socket and transport protocol.
@@ -58,6 +64,7 @@ pub struct SocketConfig {
     write_buffer_size: usize,
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
+    pub include_loopback: bool,
 }
 
 impl SocketConfig {
@@ -76,6 +83,7 @@ impl SocketConfig {
             write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
             cert_path: None,
             key_path: None,
+            include_loopback: false,
         }
     }
     /// Create a new socket configuration with the given TLS configuration and default bind address.
@@ -94,6 +102,7 @@ impl SocketConfig {
             write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
             cert_path: None,
             key_path: None,
+            include_loopback: false,
         }
     }
 
@@ -144,6 +153,11 @@ impl SocketConfig {
 
     pub fn with_key_path(mut self, path: PathBuf) -> Self {
         self.key_path = Some(path);
+        self
+    }
+
+    pub fn with_include_loopback(mut self, include_loopback: bool) -> Self {
+        self.include_loopback = include_loopback;
         self
     }
     /// Sets a custom buffer size for sending data using builder pattern.
@@ -214,14 +228,14 @@ impl SocketConfig {
         match self.server_addr.ip() {
             IpAddr::V4(ipv4addr) => {
                 if ipv4addr.is_unspecified() {
-                    addrs = device::get_default_ipv4_server_addrs();
+                    addrs = device::get_default_ipv4_server_addrs(self.include_loopback);
                 } else {
                     addrs.insert(self.server_addr);
                 }
             },
             IpAddr::V6(ipv6addr) => {
                 if ipv6addr.is_unspecified() {
-                    addrs = device::get_default_server_addrs();
+                    addrs = device::get_default_server_addrs(self.include_loopback);
                 } else {
                     addrs.insert(self.server_addr);
                 }
@@ -236,12 +250,25 @@ impl SocketConfig {
 pub struct Socket {
     /// The node address of this socket.
     pub node_addr: NodeAddr,
+    /// The configuration of this socket.
     pub config: SocketConfig,
+    /// The sessions. It is a map of connection IDs to sessions.
+    pub sessions: Arc<RwLock<HashMap<ConnectionId, Session>>>,
+    actor_sender: mpsc::Sender<ActorMessage>,
+    relay_actor_sender: mpsc::Sender<RelayActorMessage>,
 }
 
 impl Socket {
     pub fn new(node_addr: NodeAddr, config: SocketConfig) -> Self {
-        Self { node_addr, config }
+        let (actor_sender, actor_receiver) = mpsc::channel::<ActorMessage>(256);
+        let (relay_actor_sender, relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
+        Self { 
+            node_addr, 
+            config,
+            sessions: Arc::new(RwLock::new(HashMap::new())), 
+            actor_sender,
+            relay_actor_sender,
+        }
     }
     /// Start listening for incoming connections
     pub async fn listen(&mut self) -> Result<()> {
