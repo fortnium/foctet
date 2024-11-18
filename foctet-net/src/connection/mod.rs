@@ -1,14 +1,16 @@
 pub mod endpoint;
 pub mod quic;
 pub mod tcp;
+pub mod filter;
+pub mod priority;
 
 use anyhow::Result;
 use foctet_core::{
-    frame::{Frame, StreamId},
-    node::ConnectionId,
+    frame::{Frame, OperationId, StreamId},
+    node::{ConnectionId, NodeAddr},
 };
 use quic::QuicStream;
-use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc, time::Instant};
 use tcp::TlsTcpStream;
 use tokio::sync::{Mutex, RwLock};
 
@@ -43,14 +45,18 @@ impl StreamMap {
 #[derive(Debug)]
 pub struct Session {
     pub connection_id: ConnectionId,
+    pub node_addr: NodeAddr,
     pub stream_map: StreamMap,
+    pub last_accessed: Arc<Mutex<Instant>>,
 }
 
 impl Session {
-    pub fn new(connection_id: ConnectionId) -> Self {
+    pub fn new(connection_id: ConnectionId, node_addr: NodeAddr) -> Self {
         Self {
             connection_id,
+            node_addr,
             stream_map: StreamMap::new(),
+            last_accessed: Arc::new(Mutex::new(Instant::now())),
         }
     }
 
@@ -65,30 +71,46 @@ impl Session {
     pub async fn remove_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
         self.stream_map.remove_stream(stream_id).await
     }
+    pub async fn update_last_accessed(&self) {
+        let mut last_accessed = self.last_accessed.lock().await;
+        *last_accessed = Instant::now();
+    }
+    /// Close all streams in the session.
+    pub async fn close(&self) {
+        let mut streams = self.stream_map.streams.write().await;
+        for stream in streams.values() {
+            let mut stream = stream.lock().await;
+            stream.close().await.unwrap();
+        }
+        streams.clear();
+    }
 }
 
 #[allow(async_fn_in_trait)]
 pub trait FoctetStream {
-    // Connection ID
+    // Returns the Connection ID
     fn connection_id(&self) -> ConnectionId;
 
-    /// Stream ID
+    /// Returns the Stream ID
     fn stream_id(&self) -> StreamId;
 
+    /// Returns the current operation ID.
+    fn operation_id(&self) -> OperationId;
+
     /// Sends data over the stream
-    async fn send_data(&mut self, data: &[u8]) -> Result<()>;
+    async fn send_data(&mut self, data: &[u8]) -> Result<OperationId>;
 
     /// Receives data from the stream
     async fn receive_data(&mut self, buffer: &mut Vec<u8>) -> Result<usize>;
 
     /// Send a frame over the stream
-    async fn send_frame(&mut self, frame: Frame) -> Result<()>;
+    async fn send_frame(&mut self, frame: Frame) -> Result<OperationId>;
 
     /// Receive a frame over the stream
     async fn receive_frame(&mut self) -> Result<Frame>;
 
     /// Send a file over the stream
-    async fn send_file(&mut self, file_path: &Path) -> Result<()>;
+    async fn send_file(&mut self, file_path: &Path) -> Result<OperationId>;
 
     /// Receive a file over the stream
     async fn receive_file(&mut self, file_path: &Path) -> Result<u64>;
@@ -101,6 +123,7 @@ pub trait FoctetStream {
 
     /// Returns the remote address of the connection.
     fn remote_address(&self) -> SocketAddr;
+
 }
 
 #[derive(Debug)]
@@ -124,7 +147,14 @@ impl FoctetStream for NetworkStream {
         }
     }
 
-    async fn send_data(&mut self, data: &[u8]) -> Result<()> {
+    fn operation_id(&self) -> OperationId {
+        match self {
+            NetworkStream::Quic(stream) => stream.operation_id(),
+            NetworkStream::Tcp(stream) => stream.operation_id(),
+        }
+    }
+
+    async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
         match self {
             NetworkStream::Quic(stream) => stream.send_data(data).await,
             NetworkStream::Tcp(stream) => stream.send_data(data).await,
@@ -138,7 +168,7 @@ impl FoctetStream for NetworkStream {
         }
     }
 
-    async fn send_frame(&mut self, frame: Frame) -> Result<()> {
+    async fn send_frame(&mut self, frame: Frame) -> Result<OperationId> {
         match self {
             NetworkStream::Quic(stream) => stream.send_frame(frame).await,
             NetworkStream::Tcp(stream) => stream.send_frame(frame).await,
@@ -152,7 +182,7 @@ impl FoctetStream for NetworkStream {
         }
     }
 
-    async fn send_file(&mut self, file_path: &Path) -> Result<()> {
+    async fn send_file(&mut self, file_path: &Path) -> Result<OperationId> {
         match self {
             NetworkStream::Quic(stream) => stream.send_file(file_path).await,
             NetworkStream::Tcp(stream) => stream.send_file(file_path).await,

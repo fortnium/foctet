@@ -1,4 +1,4 @@
-use crate::key::{self, NodePublicKey, UUID_V4_BYTES_LEN};
+use crate::{addr::NamedSocketAddr, key::{self, NodePublicKey, UUID_V4_BYTES_LEN}};
 use anyhow::Result;
 use base32::Alphabet;
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,8 @@ pub type NodeId = NodePublicKey;
 pub struct NodeAddr {
     /// The node ID of the node.
     pub node_id: NodeId,
+    /// The hostname of the node.
+    pub server_name: Option<String>,
     /// The QUIC/TCP socket address of the node for direct connections.
     pub socket_addresses: BTreeSet<SocketAddr>,
     /// The relay server information used to connect to this node.
@@ -25,6 +27,7 @@ impl NodeAddr {
     pub fn new(node_id: NodeId) -> Self {
         Self {
             node_id,
+            server_name: None,
             socket_addresses: BTreeSet::new(),
             relay_addr: None,
         }
@@ -33,9 +36,23 @@ impl NodeAddr {
     pub fn from_node(node_addr: &NodeAddr) -> Self {
         Self {
             node_id: node_addr.node_id.clone(),
+            server_name: node_addr.server_name.clone(),
             socket_addresses: node_addr.socket_addresses.clone(),
             relay_addr: node_addr.relay_addr.clone(),
         }
+    }
+    pub fn with_named_socket_addr(mut self, named_socket_addr: NamedSocketAddr) -> Self {
+        if let Some(iter) = named_socket_addr.to_socket_addrs() {
+            for socket_addr in iter {
+                self.socket_addresses.insert(socket_addr);
+            }
+        }
+        self.server_name = Some(named_socket_addr.host);
+        self
+    }
+    pub fn with_server_name(mut self, server_name: String) -> Self {
+        self.server_name = Some(server_name);
+        self
     }
     pub fn with_socket_addr(mut self, socket_addr: SocketAddr) -> Self {
         self.socket_addresses.insert(socket_addr);
@@ -58,6 +75,7 @@ impl NodeAddr {
     pub fn unspecified() -> Self {
         Self {
             node_id: NodePublicKey::zero(),
+            server_name: None,
             socket_addresses: BTreeSet::new(),
             relay_addr: None,
         }
@@ -82,6 +100,30 @@ impl NodeAddr {
     /// Returns the first socket address in the set.
     pub fn get_socket_addr(&self) -> Option<SocketAddr> {
         self.socket_addresses.iter().next().cloned()
+    }
+    /// Get the server name
+    pub fn get_server_name(&self) -> String {
+        match &self.server_name {
+            Some(name) => name.clone(),
+            None => {
+                if self.is_unspecified() || self.socket_addresses.is_empty() {
+                    return String::new();
+                } else {
+                    // if socket_addresses contains std::net::Ipv4Addr::LOCALHOST std::net::Ipv6Addr::LOCALHOST
+                    // return "localhost"
+                    for socket_addr in &self.socket_addresses {
+                        if socket_addr.ip().is_loopback() {
+                            return "localhost".to_string();
+                        }
+                    }
+                    // return the first socket address
+                    match self.socket_addresses.iter().next() {
+                        Some(socket_addr) => socket_addr.ip().to_string(),
+                        None => String::new(),
+                    }
+                }
+            },
+        }
     }
 }
 
@@ -126,8 +168,8 @@ impl ConnectionId {
 pub struct RelayAddr {
     /// The node ID of the relay server.
     pub relay_node_id: NodeId,
-    // The name of the relay server.
-    //pub relay_server_name: String,
+    /// The hostname of the relay server.
+    pub relay_server_name: Option<String>,
     /// The QUIC/TCP socket address of the relay server.
     pub socket_addresses: BTreeSet<SocketAddr>,
     /// Connection ID for the relay server.
@@ -139,6 +181,7 @@ impl RelayAddr {
     pub fn new(relay_node_id: NodeId) -> Self {
         Self {
             relay_node_id,
+            relay_server_name: None,
             socket_addresses: BTreeSet::new(),
             relay_connection_id: None,
         }
@@ -146,15 +189,9 @@ impl RelayAddr {
     pub fn unspecified() -> Self {
         Self {
             relay_node_id: NodePublicKey::zero(),
+            relay_server_name: None,
             socket_addresses: BTreeSet::new(),
             relay_connection_id: None,
-        }
-    }
-    pub fn new_with_relay_connection(connection_id: ConnectionId) -> Self {
-        Self {
-            relay_node_id: NodePublicKey::zero(),
-            socket_addresses: BTreeSet::new(),
-            relay_connection_id: Some(connection_id),
         }
     }
     pub fn with_socket_addr(mut self, socket_addr: SocketAddr) -> Self {
@@ -169,10 +206,51 @@ impl RelayAddr {
     pub fn add_socket_addr(&mut self, socket_addr: SocketAddr) {
         self.socket_addresses.insert(socket_addr);
     }
+    pub fn with_named_socket_addr(mut self, named_socket_addr: NamedSocketAddr) -> Self {
+        if let Some(iter) = named_socket_addr.to_socket_addrs() {
+            for socket_addr in iter {
+                self.socket_addresses.insert(socket_addr);
+            }
+        }
+        self.relay_server_name = Some(named_socket_addr.host);
+        self
+    }
+    pub fn with_server_name(mut self, server_name: String) -> Self {
+        self.relay_server_name = Some(server_name);
+        self
+    }
     /// Set connection ID.
     pub fn with_connection_id(mut self, connection_id: ConnectionId) -> Self {
         self.relay_connection_id = Some(connection_id);
         self
+    }
+    /// Check if the node address is unspecified.
+    pub fn is_unspecified(&self) -> bool {
+        self.relay_node_id.is_zero()
+    }
+    /// Get the server name
+    pub fn get_server_name(&self) -> String {
+        match &self.relay_server_name {
+            Some(name) => name.clone(),
+            None => {
+                if self.is_unspecified() || self.socket_addresses.is_empty() {
+                    return String::new();
+                } else {
+                    // if socket_addresses contains std::net::Ipv4Addr::LOCALHOST std::net::Ipv6Addr::LOCALHOST
+                    // return "localhost"
+                    for socket_addr in &self.socket_addresses {
+                        if socket_addr.ip().is_loopback() {
+                            return "localhost".to_string();
+                        }
+                    }
+                    // return the first socket address
+                    match self.socket_addresses.iter().next() {
+                        Some(socket_addr) => socket_addr.ip().to_string(),
+                        None => String::new(),
+                    }
+                }
+            },
+        }
     }
 }
 

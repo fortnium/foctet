@@ -1,9 +1,11 @@
 use super::FoctetStream;
 use crate::socket::SocketConfig;
+use anyhow::anyhow;
 use anyhow::Result;
 use foctet_core::error::StreamError;
+use foctet_core::frame::OperationId;
 use foctet_core::frame::{Frame, FrameType, Payload, StreamId};
-use foctet_core::node::{ConnectionId, NodeId};
+use foctet_core::node::{ConnectionId, NodeAddr, NodeId};
 use futures::sink::SinkExt;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -22,7 +24,7 @@ pub struct TlsTcpStream {
     pub send_buffer_size: usize,
     pub receive_buffer_size: usize,
     pub is_closed: bool,
-    pub next_operation_id: u64,
+    pub next_operation_id: OperationId,
     pub remote_address: SocketAddr,
 }
 
@@ -33,7 +35,10 @@ impl FoctetStream for TlsTcpStream {
     fn stream_id(&self) -> StreamId {
         self.stream_id
     }
-    async fn send_data(&mut self, data: &[u8]) -> Result<()> {
+    fn operation_id(&self) -> OperationId {
+        self.next_operation_id
+    }
+    async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
         let mut framed_writer: FramedWrite<&mut TlsStream<TcpStream>, LengthDelimitedCodec> =
             FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let mut offset = 0;
@@ -55,8 +60,9 @@ impl FoctetStream for TlsTcpStream {
         }
         framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
-        self.next_operation_id += 1;
-        Ok(())
+        let operation_id = self.operation_id();
+        self.next_operation_id.increment();
+        Ok(operation_id)
     }
 
     async fn receive_data(&mut self, buffer: &mut Vec<u8>) -> Result<usize> {
@@ -83,15 +89,16 @@ impl FoctetStream for TlsTcpStream {
         Ok(total_bytes_read)
     }
 
-    async fn send_frame(&mut self, frame: Frame) -> Result<()> {
+    async fn send_frame(&mut self, frame: Frame) -> Result<OperationId> {
         let mut framed_writer = FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
         framed_writer.send(serialized_message.into()).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
-        self.next_operation_id += 1;
-        Ok(())
+        let operation_id = self.operation_id();
+        self.next_operation_id.increment();
+        Ok(operation_id)
     }
 
     async fn receive_frame(&mut self) -> Result<Frame> {
@@ -111,7 +118,7 @@ impl FoctetStream for TlsTcpStream {
         Err(StreamError::Closed.into())
     }
 
-    async fn send_file(&mut self, file_path: &std::path::Path) -> Result<()> {
+    async fn send_file(&mut self, file_path: &std::path::Path) -> Result<OperationId> {
         let mut framed_writer = FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let mut file = tokio::fs::File::open(file_path).await?;
         let mut buffer = vec![0u8; self.send_buffer_size];
@@ -143,8 +150,9 @@ impl FoctetStream for TlsTcpStream {
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
-        self.next_operation_id += 1;
-        Ok(())
+        let operation_id = self.operation_id();
+        self.next_operation_id.increment();
+        Ok(operation_id)
     }
 
     async fn receive_file(&mut self, file_path: &std::path::Path) -> Result<u64> {
@@ -227,7 +235,7 @@ impl TcpSocket {
             send_buffer_size: self.config.write_buffer_size(),
             receive_buffer_size: self.config.read_buffer_size(),
             is_closed: false,
-            next_operation_id: 0,
+            next_operation_id: OperationId(0),
             remote_address: remote_address,
         };
         Ok(tls_tcp_stream)
@@ -246,11 +254,29 @@ impl TcpSocket {
                 send_buffer_size: self.config.write_buffer_size(),
                 receive_buffer_size: self.config.read_buffer_size(),
                 is_closed: false,
-                next_operation_id: 0,
+                next_operation_id: OperationId(0),
                 remote_address: remote_address,
             };
             sender.send(tls_tcp_stream).await?;
         }
         Ok(())
+    }
+
+    pub async fn connect_node(&mut self, node_addr: NodeAddr) -> Result<TlsTcpStream> {
+        let sorted_addrs = super::priority::sort_socket_addrs(&node_addr.socket_addresses);
+        let addrs = super::filter::filter_reachable_addrs(sorted_addrs, self.config.include_loopback);
+        let server_name = node_addr.get_server_name();
+        for addr in addrs {
+            match self.connect(addr, &server_name).await {
+                Ok(connection) => {
+                    tracing::info!("Connected to {}", addr);
+                    return Ok(connection);
+                }
+                Err(e) => {
+                    tracing::error!("Error connecting to {}: {:?}", addr, e);
+                }
+            }
+        }
+        Err(anyhow!("Failed to connect to node"))
     }
 }

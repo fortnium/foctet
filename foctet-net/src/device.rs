@@ -16,43 +16,51 @@ pub fn get_default_bind_addr() -> SocketAddr {
     }
 }
 
-pub fn get_default_server_addrs() -> BTreeSet<SocketAddr> {
+pub fn get_default_server_addrs(include_loopback: bool) -> BTreeSet<SocketAddr> {
     let default_interface = match netdev::get_default_interface() {
         Ok(interface) => interface,
         Err(_) => return BTreeSet::new(),
     };
     let mut server_addrs = BTreeSet::new();
-    server_addrs.insert(LOCALHOST_SERVER_V4_ADDR);
+    if include_loopback {
+        server_addrs.insert(LOCALHOST_SERVER_V4_ADDR);
+    }
     for ipv4net in default_interface.ipv4.iter() {
         server_addrs.insert(SocketAddr::new(IpAddr::V4(ipv4net.addr()), DEFAULT_SERVER_PORT));
     }
-    server_addrs.insert(LOCALHOST_SERVER_V6_ADDR);
+    if include_loopback {
+        server_addrs.insert(LOCALHOST_SERVER_V6_ADDR);
+    }
     for ipv6net in default_interface.ipv6.iter() {
         server_addrs.insert(SocketAddr::new(IpAddr::V6(ipv6net.addr()), DEFAULT_SERVER_PORT));
     }
     server_addrs
 }
 
-pub fn get_default_ipv4_server_addrs() -> BTreeSet<SocketAddr> {
+pub fn get_default_ipv4_server_addrs(include_loopback: bool) -> BTreeSet<SocketAddr> {
     let default_interface = match netdev::get_default_interface() {
         Ok(interface) => interface,
         Err(_) => return BTreeSet::new(),
     };
     let mut server_addrs = BTreeSet::new();
-    server_addrs.insert(LOCALHOST_SERVER_V4_ADDR);
+    if include_loopback {
+        server_addrs.insert(LOCALHOST_SERVER_V4_ADDR);
+    }
     for ipv4net in default_interface.ipv4.iter() {
         server_addrs.insert(SocketAddr::new(IpAddr::V4(ipv4net.addr()), DEFAULT_SERVER_PORT));
     }
     server_addrs
 }
 
-pub fn get_default_ipv6_server_addrs() -> BTreeSet<SocketAddr> {
+pub fn get_default_ipv6_server_addrs(include_loopback: bool) -> BTreeSet<SocketAddr> {
     let default_interface = match netdev::get_default_interface() {
         Ok(interface) => interface,
         Err(_) => return BTreeSet::new(),
     };
     let mut server_addrs = BTreeSet::new();
-    server_addrs.insert(LOCALHOST_SERVER_V6_ADDR);
+    if include_loopback {
+        server_addrs.insert(LOCALHOST_SERVER_V6_ADDR);
+    }
     for ipv6net in default_interface.ipv6.iter() {
         server_addrs.insert(SocketAddr::new(IpAddr::V6(ipv6net.addr()), DEFAULT_SERVER_PORT));
     }
