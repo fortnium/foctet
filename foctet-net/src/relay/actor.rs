@@ -55,8 +55,8 @@ impl RelaySocketActor {
                                 SessionCommand::Connect(node_addr) => {
                                     tracing::info!("Connecting to node: {:?}", node_addr);
                                     match self.connect(node_addr.clone()).await {
-                                        Ok(stream_id) => {
-                                            let msg = ActorMessage::Ack(AckMessage::Connected { node_id: node_addr.node_id, stream_id: stream_id });
+                                        Ok(_) => {
+                                            let msg = ActorMessage::Ack(AckMessage::Connected { node_id: node_addr.node_id});
                                             let _ = self.msg_sender.send(msg).await;
                                         },
                                         Err(e) => {
@@ -82,12 +82,12 @@ impl RelaySocketActor {
                                     match self.send_frame(target_node.clone(), stream_id, frame).await {
                                         Ok(_) => {
                                             tracing::info!("Frame sent successfully");
-                                            let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node, stream_id: stream_id });
+                                            let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node });
                                             let _ = self.msg_sender.send(msg).await;
                                         }
                                         Err(e) => {
                                             tracing::error!("Error sending frame: {:?}", e);
-                                            let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, stream_id: stream_id, error: e });
+                                            let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, error: e });
                                             let _ = self.msg_sender.send(err_msg).await;
                                         }
                                     }
@@ -97,12 +97,12 @@ impl RelaySocketActor {
                                     match self.send_file(target_node.clone(), stream_id, file_path).await {
                                         Ok(_) => {
                                             tracing::info!("File sent successfully");
-                                            let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node, stream_id: stream_id });
+                                            let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node });
                                             let _ = self.msg_sender.send(msg).await;
                                         }
                                         Err(e) => {
                                             tracing::error!("Error sending file: {:?}", e);
-                                            let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, stream_id: stream_id, error: e });
+                                            let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, error: e });
                                             let _ = self.msg_sender.send(err_msg).await;
                                         }
                                     }
@@ -133,7 +133,7 @@ impl RelaySocketActor {
         let _ = self.msg_sender.send(ActorMessage::Ack(AckMessage::ShutdownComplete)).await;
     }
 
-    async fn connect(&mut self, node_addr: NodeAddr) -> Result<StreamId> {
+    async fn connect(&mut self, node_addr: NodeAddr) -> Result<()> {
         tracing::info!("Attempting to connect to {:?}", node_addr);
         // 1. Try QUIC connection
         match self.quic_socket.connect_node(node_addr.clone()).await {
@@ -147,7 +147,7 @@ impl RelaySocketActor {
                 let stream_arc = Arc::new(Mutex::new(NetworkStream::Quic(stream)));
                 session.add_stream(stream_id, stream_arc).await;
                 self.relay_sessions.write().await.insert(node_addr.node_id.clone(), session);
-                return Ok(stream_id);
+                return Ok(());
             }
             Err(e) => {
                 tracing::warn!("Failed to connect to {:?} via QUIC: {:?}", node_addr.node_id, e);
@@ -164,7 +164,7 @@ impl RelaySocketActor {
                 let session = Session::new(connection_id, node_addr.clone());
                 session.add_stream(stream_id, stream_arc).await;
                 self.relay_sessions.write().await.insert(node_addr.node_id.clone(), session);
-                return Ok(stream_id);
+                return Ok(());
             }
             Err(e) => {
                 tracing::error!("Failed to connect to {:?} via TCP: {:?}", node_addr.node_id, e);

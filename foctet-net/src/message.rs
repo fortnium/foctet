@@ -11,13 +11,11 @@ pub enum ActorMessage {
     DataTransfer {
         operation_id: OperationId,
         target_node: NodeId,
-        stream_id: StreamId,
         payload: TransferPayload,
     },
     /// Data reception related commands
     DataReceive {
         source_node: NodeId,
-        stream_id: StreamId,
         receive_type: ReceiveType,
     },
     /// Control related commands
@@ -86,30 +84,29 @@ pub enum AckMessage {
     Failure(anyhow::Error),
     Connected {
         node_id: NodeId,
-        stream_id: StreamId,
     },
     Disconnected(NodeId),
     TransferComplete {
         operation_id: OperationId,
         node_id: NodeId,
-        stream_id: StreamId,
     },
     TransferError {
         operation_id: OperationId,
         node_id: NodeId,
-        stream_id: StreamId,
         error: anyhow::Error,
     },
     FrameReceived {
         node_id: NodeId,
-        stream_id: StreamId,
         frame: Frame,
     },
     FileReceived {
         node_id: NodeId,
-        stream_id: StreamId,
         path: PathBuf,
-        bytes: u64,
+        byte_size: u64,
+    },
+    ReceiveError {
+        node_id: NodeId,
+        error: anyhow::Error,
     },
     ShutdownComplete,
 }

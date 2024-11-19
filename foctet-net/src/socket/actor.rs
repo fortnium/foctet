@@ -4,7 +4,7 @@ use foctet_core::{frame::{Frame, OperationId, StreamId}, node::{ConnectionId, No
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;
-use crate::{connection::{quic::QuicSocket, tcp::TcpSocket, FoctetStream, NetworkStream, Session}, message::{AckMessage, ActorMessage, ControlCommand, SessionCommand, TransferPayload}};
+use crate::{connection::{quic::QuicSocket, tcp::TcpSocket, FoctetStream, NetworkStream, Session}, message::{AckMessage, ActorMessage, ControlCommand, ReceiveType, SessionCommand, TransferPayload}};
 
 use super::Socket;
 
@@ -55,8 +55,8 @@ impl SocketActor {
                                 SessionCommand::Connect(node_addr) => {
                                     tracing::info!("Connecting to node: {:?}", node_addr);
                                     match self.connect(node_addr.clone()).await {
-                                        Ok(stream_id) => {
-                                            let msg = ActorMessage::Ack(AckMessage::Connected { node_id: node_addr.node_id, stream_id: stream_id });
+                                        Ok(_) => {
+                                            let msg = ActorMessage::Ack(AckMessage::Connected { node_id: node_addr.node_id });
                                             let _ = self.msg_sender.send(msg).await;
                                         },
                                         Err(e) => {
@@ -75,40 +75,74 @@ impl SocketActor {
                                 }
                             }
                         }
-                        ActorMessage::DataTransfer { operation_id, target_node, stream_id, payload } => {
+                        ActorMessage::DataTransfer { operation_id, target_node, payload } => {
                             match payload {
                                 TransferPayload::Frame(frame) => {
-                                    tracing::info!("Send frame to {:?} on {}", target_node, stream_id);
-                                    match self.send_frame(target_node.clone(), stream_id, frame).await {
+                                    tracing::info!("Send frame to {:?}", target_node);
+                                    match self.send_frame(target_node.clone(), frame).await {
                                         Ok(_) => {
                                             tracing::info!("Frame sent successfully");
-                                            let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node, stream_id: stream_id });
+                                            let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node });
                                             let _ = self.msg_sender.send(msg).await;
                                         }
                                         Err(e) => {
                                             tracing::error!("Error sending frame: {:?}", e);
-                                            let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, stream_id: stream_id, error: e });
+                                            let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, error: e });
                                             let _ = self.msg_sender.send(err_msg).await;
                                         }
                                     }
                                 }
                                 TransferPayload::File(file_path) => {
-                                    tracing::info!("Send file to {:?} on {}", target_node, stream_id);
-                                    match self.send_file(target_node.clone(), stream_id, file_path).await {
+                                    tracing::info!("Send file to {:?}", target_node);
+                                    match self.send_file(target_node.clone(), file_path).await {
                                         Ok(_) => {
                                             tracing::info!("File sent successfully");
-                                            let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node, stream_id: stream_id });
+                                            let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node });
                                             let _ = self.msg_sender.send(msg).await;
                                         }
                                         Err(e) => {
                                             tracing::error!("Error sending file: {:?}", e);
-                                            let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, stream_id: stream_id, error: e });
+                                            let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, error: e });
                                             let _ = self.msg_sender.send(err_msg).await;
                                         }
                                     }
                                 }
                             }
                         }
+                        ActorMessage::DataReceive {source_node, receive_type} => {
+                            match receive_type {
+                                ReceiveType::Frame => {
+                                    tracing::info!("Receive frame from {:?}", source_node);
+                                    match self.receive_frame(source_node.clone()).await {
+                                        Ok(frame) => {
+                                            tracing::info!("Frame received successfully");
+                                            let msg = ActorMessage::Ack(AckMessage::FrameReceived { node_id: source_node, frame });
+                                            let _ = self.msg_sender.send(msg).await;
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Error receiving frame: {:?}", e);
+                                            let err_msg = ActorMessage::Ack(AckMessage::ReceiveError { node_id: source_node, error: e });
+                                            let _ = self.msg_sender.send(err_msg).await;
+                                        }
+                                    }
+                                }
+                                ReceiveType::File(path) => {
+                                    tracing::info!("Receive file from {:?}", source_node);
+                                    match self.receive_file(source_node.clone(), &path).await {
+                                        Ok(byte_size) => {
+                                            tracing::info!("File received successfully");
+                                            let msg = ActorMessage::Ack(AckMessage::FileReceived { node_id: source_node, path, byte_size });
+                                            let _ = self.msg_sender.send(msg).await;
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Error receiving file: {:?}", e);
+                                            let err_msg = ActorMessage::Ack(AckMessage::ReceiveError { node_id: source_node, error: e });
+                                            let _ = self.msg_sender.send(err_msg).await;
+                                        }
+                                    }
+                                }
+                            }
+                        },
                         ActorMessage::Control(control_command) => {
                             match control_command {
                                 ControlCommand::Shutdown => {
@@ -133,7 +167,7 @@ impl SocketActor {
         let _ = self.msg_sender.send(ActorMessage::Ack(AckMessage::ShutdownComplete)).await;
     }
 
-    async fn connect(&mut self, node_addr: NodeAddr) -> Result<StreamId> {
+    async fn connect(&mut self, node_addr: NodeAddr) -> Result<()> {
         tracing::info!("Attempting to connect to {:?}", node_addr);
         // 1. Try QUIC connection
         match self.quic_socket.connect_node(node_addr.clone()).await {
@@ -142,12 +176,12 @@ impl SocketActor {
                 let stream = connection.open_stream().await?;
                 // Create session
                 let connection_id = ConnectionId::new();
-                let session = Session::new(connection_id, node_addr.clone());
+                let session = Session::new_with_quic_connection(connection_id, node_addr.clone(), connection);
                 let stream_id = stream.stream_id();
                 let stream_arc = Arc::new(Mutex::new(NetworkStream::Quic(stream)));
                 session.add_stream(stream_id, stream_arc).await;
                 self.sessions.write().await.insert(node_addr.node_id.clone(), session);
-                return Ok(stream_id);
+                return Ok(());
             }
             Err(e) => {
                 tracing::warn!("Failed to connect to {:?} via QUIC: {:?}", node_addr.node_id, e);
@@ -164,7 +198,7 @@ impl SocketActor {
                 let session = Session::new(connection_id, node_addr.clone());
                 session.add_stream(stream_id, stream_arc).await;
                 self.sessions.write().await.insert(node_addr.node_id.clone(), session);
-                return Ok(stream_id);
+                return Ok(());
             }
             Err(e) => {
                 tracing::error!("Failed to connect to {:?} via TCP: {:?}", node_addr.node_id, e);
@@ -177,6 +211,38 @@ impl SocketActor {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.remove(&node_id) {
             session.close().await;
+        }
+    }
+
+    pub async fn get_available_stream(&self, node_id: NodeId) -> Option<Arc<Mutex<NetworkStream>>> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(&node_id)?;
+        session.get_available_stream().await
+    }
+
+    pub async fn open_stream(&mut self, node_id: NodeId) -> Result<Arc<Mutex<NetworkStream>>> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(&node_id).ok_or(anyhow::anyhow!("Session not found"))?;
+        if let Some(quic_connection) = &mut session.quic_connection {
+            let stream = quic_connection.open_stream().await?;
+            let stream_id = stream.stream_id();
+            let stream_arc = Arc::new(Mutex::new(NetworkStream::Quic(stream)));
+            session.add_stream(stream_id, Arc::clone(&stream_arc)).await;
+            return Ok(stream_arc);
+        } else {
+            // Open a new TCP stream
+            let stream = self.tcp_socket.connect_node(session.node_addr.clone()).await?;
+            let stream_id = stream.stream_id();
+            let stream_arc = Arc::new(Mutex::new(NetworkStream::Tcp(stream)));
+            session.add_stream(stream_id, Arc::clone(&stream_arc)).await;
+            return Ok(stream_arc);
+        }
+    }
+
+    pub async fn get_stream(&mut self, node_id: NodeId) -> Result<Arc<Mutex<NetworkStream>>> {
+        match self.get_available_stream(node_id.clone()).await {
+            Some(stream) => Ok(stream),
+            None => self.open_stream(node_id).await,
         }
     }
 
@@ -194,16 +260,15 @@ impl SocketActor {
     pub async fn send_frame(
         &mut self,
         node_id: NodeId,
-        stream_id: StreamId,
         frame: Frame,
     ) -> Result<OperationId> {
-        match self.find_stream(node_id, stream_id).await {
-            Some(stream) => {
+        match self.get_stream(node_id).await {
+            Ok(stream) => {
                 let mut stream = stream.lock().await;
                 stream.send_frame(frame).await
             }
-            None => {
-                Err(anyhow::anyhow!("Stream not found"))
+            Err(e) => {
+                Err(e)
             }
         }
     }
@@ -211,15 +276,14 @@ impl SocketActor {
     pub async fn receive_frame(
         &mut self,
         node_id: NodeId,
-        stream_id: StreamId,
     ) -> Result<Frame> {
-        match self.find_stream(node_id, stream_id).await {
-            Some(stream) => {
+        match self.get_stream(node_id).await {
+            Ok(stream) => {
                 let mut stream = stream.lock().await;
                 stream.receive_frame().await
             }
-            None => {
-                Err(anyhow::anyhow!("Stream not found"))
+            Err(e) => {
+                Err(e)
             }
         }
     }
@@ -227,16 +291,15 @@ impl SocketActor {
     pub async fn send_file(
         &mut self,
         node_id: NodeId,
-        stream_id: StreamId,
         path: PathBuf,
     ) -> Result<OperationId> {
-        match self.find_stream(node_id, stream_id).await {
-            Some(stream) => {
+        match self.get_stream(node_id).await {
+            Ok(stream) => {
                 let mut stream = stream.lock().await;
                 stream.send_file(&path).await
             }
-            None => {
-                Err(anyhow::anyhow!("Stream not found"))
+            Err(e) => {
+                Err(e)
             }
         }
     }
@@ -244,16 +307,15 @@ impl SocketActor {
     pub async fn receive_file(
         &mut self,
         node_id: NodeId,
-        stream_id: StreamId,
         path: &std::path::Path,
     ) -> Result<u64> {
-        match self.find_stream(node_id, stream_id).await {
-            Some(stream) => {
+        match self.get_stream(node_id).await {
+            Ok(stream) => {
                 let mut stream = stream.lock().await;
                 stream.receive_file(path).await
             }
-            None => {
-                Err(anyhow::anyhow!("Stream not found"))
+            Err(e) => {
+                Err(e)
             }
         }
     }

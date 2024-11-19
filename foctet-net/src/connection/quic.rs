@@ -233,6 +233,7 @@ impl FoctetStream for QuicStream {
     }
 }
 
+#[derive(Debug)]
 pub struct QuicConnection {
     pub node_id: NodeId,
     pub connection_id: ConnectionId,

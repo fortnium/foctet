@@ -46,6 +46,7 @@ impl StreamMap {
 pub struct Session {
     pub connection_id: ConnectionId,
     pub node_addr: NodeAddr,
+    pub quic_connection: Option<quic::QuicConnection>,
     pub stream_map: StreamMap,
     pub last_accessed: Arc<Mutex<Instant>>,
 }
@@ -55,6 +56,21 @@ impl Session {
         Self {
             connection_id,
             node_addr,
+            quic_connection: None,
+            stream_map: StreamMap::new(),
+            last_accessed: Arc::new(Mutex::new(Instant::now())),
+        }
+    }
+
+    pub fn new_with_quic_connection(
+        connection_id: ConnectionId,
+        node_addr: NodeAddr,
+        quic_connection: quic::QuicConnection,
+    ) -> Self {
+        Self {
+            connection_id,
+            node_addr,
+            quic_connection: Some(quic_connection),
             stream_map: StreamMap::new(),
             last_accessed: Arc::new(Mutex::new(Instant::now())),
         }
@@ -66,6 +82,20 @@ impl Session {
 
     pub async fn get_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
         self.stream_map.get_stream(stream_id).await
+    }
+
+    /// Returns the first available stream.
+    /// Which is not closed and not in use (not locked).
+    pub async fn get_available_stream(&self) -> Option<Arc<Mutex<NetworkStream>>> {
+        let streams = self.stream_map.streams.read().await;
+        streams.values().find(|stream| {
+            match stream.try_lock() {
+                Ok(stream_lock) => {
+                    !stream_lock.is_closed()
+                },
+                Err(_) => false,
+            }
+        }).cloned()
     }
 
     pub async fn remove_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
