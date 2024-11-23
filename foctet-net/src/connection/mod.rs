@@ -36,9 +36,23 @@ impl StreamMap {
         streams.get(stream_id).cloned()
     }
 
-    pub async fn remove_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
+    pub async fn remove_stream(&self, stream_id: &StreamId) -> Result<()> {
         let mut streams = self.streams.write().await;
-        streams.remove(stream_id)
+        if let Some(stream) = streams.remove(stream_id) {
+            // Close the stream
+            let mut stream = stream.lock().await;
+            return stream.close().await
+        }
+        Ok(())
+    }
+
+    pub async fn remove_all_streams(&self) {
+        let mut streams = self.streams.write().await;
+        for stream in streams.values() {
+            let mut stream = stream.lock().await;
+            let _ = stream.close().await;
+        }
+        streams.clear();
     }
 }
 
@@ -77,16 +91,19 @@ impl Session {
     }
 
     pub async fn add_stream(&self, stream_id: StreamId, stream: Arc<Mutex<NetworkStream>>) {
+        self.update_last_accessed().await;
         self.stream_map.add_stream(stream_id, stream).await;
     }
 
     pub async fn get_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
+        self.update_last_accessed().await;
         self.stream_map.get_stream(stream_id).await
     }
 
     /// Returns the first available stream.
     /// Which is not closed and not in use (not locked).
     pub async fn get_available_stream(&self) -> Option<Arc<Mutex<NetworkStream>>> {
+        self.update_last_accessed().await;
         let streams = self.stream_map.streams.read().await;
         streams.values().find(|stream| {
             match stream.try_lock() {
@@ -98,7 +115,7 @@ impl Session {
         }).cloned()
     }
 
-    pub async fn remove_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
+    pub async fn remove_stream(&self, stream_id: &StreamId) -> Result<()> {
         self.stream_map.remove_stream(stream_id).await
     }
     pub async fn update_last_accessed(&self) {
@@ -106,13 +123,33 @@ impl Session {
         *last_accessed = Instant::now();
     }
     /// Close all streams in the session.
-    pub async fn close(&self) {
-        let mut streams = self.stream_map.streams.write().await;
-        for stream in streams.values() {
-            let mut stream = stream.lock().await;
-            stream.close().await.unwrap();
+    pub async fn close(&mut self) {
+        // Close all streams
+        self.stream_map.remove_all_streams().await;
+        // Close the QUIC connection
+        if let Some(quic_connection) = &mut self.quic_connection {
+            let _ = quic_connection.close().await;
         }
-        streams.clear();
+    }
+    /// Cleans up unnecessary streams, keeping at least one open stream.
+    pub async fn cleanup_streams(&self) {
+        // Check available stream
+        let available_stream_id: StreamId = if let Some(stream) = self.get_available_stream().await {
+            stream.lock().await.stream_id()
+        }else{
+            return;
+        };
+        // Remove all streams except the 1 available stream.
+        let streams = self.stream_map.streams.read().await;
+        let mut stream_ids: Vec<StreamId> = Vec::new();
+        for stream_id in streams.keys() {
+            if *stream_id != available_stream_id {
+                stream_ids.push(*stream_id);
+            }
+        }
+        for stream_id in stream_ids {
+            self.remove_stream(&stream_id).await.unwrap();
+        }
     }
 }
 

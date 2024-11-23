@@ -209,7 +209,7 @@ impl SocketActor {
 
     async fn disconnect(&self, node_id: NodeId) {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.remove(&node_id) {
+        if let Some(mut session) = sessions.remove(&node_id) {
             session.close().await;
         }
     }
@@ -322,11 +322,21 @@ impl SocketActor {
 
     pub async fn shutdown(&mut self) {
         let _ = self.cancel_token.cancel();
+        self.close_sessions().await;
     }
     
-    pub async fn cleanup_sessions(&mut self) {
+    pub async fn close_sessions(&mut self) {
         let mut sessions = self.sessions.write().await;
-        sessions.clear();
+        for (_, session) in sessions.iter_mut() {
+            session.close().await;
+        }
+    }
+
+    pub async fn cleanup_session(&mut self, node_id: NodeId) {
+        let sessions = self.sessions.write().await;
+        sessions.get(&node_id).map(|session| {
+            let _ = session.cleanup_streams();
+        });
     }
 
     pub async fn run_cleanup_task(&self) {

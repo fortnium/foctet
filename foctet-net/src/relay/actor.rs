@@ -175,7 +175,7 @@ impl RelaySocketActor {
 
     async fn disconnect(&self, node_id: NodeId) {
         let mut sessions = self.relay_sessions.write().await;
-        if let Some(session) = sessions.remove(&node_id) {
+        if let Some(mut session) = sessions.remove(&node_id) {
             session.close().await;
         }
     }
