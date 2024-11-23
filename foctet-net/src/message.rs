@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use foctet_core::{frame::{Frame, OperationId, StreamId}, node::{NodeAddr, NodeId}};
+use foctet_core::{frame::{Frame, OperationId}, node::{NodeAddr, NodeId}};
 
 /// Actor messages
 #[derive(Debug)]
@@ -33,13 +33,11 @@ pub enum RelayActorMessage {
     DataTransfer {
         operation_id: OperationId,
         target_node: NodeId,
-        stream_id: StreamId,
         payload: TransferPayload,
     },
     /// Data reception related commands
     DataReceive {
         source_node: NodeId,
-        stream_id: StreamId,
         receive_type: ReceiveType,
     },
     /// Control related commands

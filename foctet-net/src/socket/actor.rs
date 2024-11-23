@@ -26,7 +26,7 @@ pub struct SocketActor {
 }
 
 impl SocketActor {
-    pub fn new(socket: Arc<Socket>, msg_sender: mpsc::Sender<ActorMessage>) -> Result<Self> {
+    pub fn new(socket: Arc<Socket>, msg_sender: mpsc::Sender<ActorMessage>, cancel_token: CancellationToken) -> Result<Self> {
         let quic_socket = QuicSocket::new(socket.node_addr.node_id.clone(), socket.config.clone())?;
         let tcp_socket = TcpSocket::new(socket.node_addr.node_id.clone(), socket.config.clone())?;
         Ok(Self {
@@ -34,7 +34,7 @@ impl SocketActor {
             msg_sender,
             remote_nodes: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
-            cancel_token: CancellationToken::new(),
+            cancel_token: cancel_token,
             quic_socket,
             tcp_socket,
         })

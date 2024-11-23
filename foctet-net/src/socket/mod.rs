@@ -1,5 +1,6 @@
 pub mod actor;
 
+use actor::SocketActor;
 use foctet_core::default::{
     DEFAULT_BIND_V4_ADDR, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_MAX_RETRIES, DEFAULT_RECEIVE_TIMEOUT,
     DEFAULT_SERVER_V4_ADDR, DEFAULT_WRITE_BUFFER_SIZE,
@@ -8,28 +9,20 @@ use foctet_core::default::{
     DEFAULT_READ_BUFFER_SIZE, DEFAULT_SEND_TIMEOUT, MAX_READ_BUFFER_SIZE, MAX_WRITE_BUFFER_SIZE,
     MIN_READ_BUFFER_SIZE, MIN_WRITE_BUFFER_SIZE,
 };
-use foctet_core::node::ConnectionId;
-use crate::connection::Session;
+use tokio_util::sync::CancellationToken;
 use crate::device;
 use crate::message::{ActorMessage, RelayActorMessage};
+use crate::relay::actor::RelaySocketActor;
 use crate::tls::TlsConfig;
-use crate::connection::{
-    quic::{QuicConnection, QuicSocket},
-    tcp::{TcpSocket, TlsTcpStream},
-    FoctetStream,
-};
 
 use anyhow::Result;
 use anyhow::anyhow;
-use foctet_core::{
-    error::ConnectionError,
-    node::{NodeAddr, NodeId},
-};
-use tokio::sync::{mpsc, RwLock};
+use foctet_core::node::NodeAddr;
+use tokio::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 use std::path::PathBuf;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::net::{IpAddr, SocketAddr};
 
 /// The type of socket and transport protocol.
@@ -245,6 +238,24 @@ impl SocketConfig {
     }
 }
 
+/// The socket handle.
+/// It is a reference-counted pointer to the socket.
+pub struct SocketHandle {
+    inner: Arc<Socket>,
+}
+
+impl Clone for SocketHandle {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl SocketHandle {
+    // TODO!
+}
+
 /// The foctet socket.
 /// It can be either a QUIC socket, a TCP socket, or both.
 pub struct Socket {
@@ -252,23 +263,112 @@ pub struct Socket {
     pub node_addr: NodeAddr,
     /// The configuration of this socket.
     pub config: SocketConfig,
-    /// The sessions. It is a map of connection IDs to sessions.
-    pub sessions: Arc<RwLock<HashMap<ConnectionId, Session>>>,
+    /// The actor message sender.
     actor_sender: mpsc::Sender<ActorMessage>,
+    /// The actor message receiver.
+    actor_receiver: mpsc::Receiver<ActorMessage>,
+    /// The relay actor message sender.
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
+    /// The relay actor message receiver.
+    relay_actor_receiver: mpsc::Receiver<RelayActorMessage>,
+    /// The actor cancellation token.
+    actor_cancel_token: CancellationToken,
+    /// The relay actor cancellation token.
+    relay_actor_cancel_token: CancellationToken,
 }
 
 impl Socket {
-    pub fn new(node_addr: NodeAddr, config: SocketConfig) -> Self {
-        let (actor_sender, actor_receiver) = mpsc::channel::<ActorMessage>(256);
-        let (relay_actor_sender, relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
-        Self { 
+    pub fn new(node_addr: NodeAddr, config: SocketConfig) -> Result<SocketHandle> {
+        let (from_actor_sender, from_actor_receiver) = mpsc::channel::<ActorMessage>(256);
+        let (from_relay_actor_sender, from_relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
+        let (to_actor_sender, to_actor_receiver) = mpsc::channel::<ActorMessage>(256);
+        let (to_relay_actor_sender, to_relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
+        
+        let actor_cancel_token = CancellationToken::new();
+        let cloned_actor_cancel_token = actor_cancel_token.clone();
+        let relay_actor_cancel_token = CancellationToken::new();
+        let cloned_relay_actor_cancel_token = relay_actor_cancel_token.clone();
+        
+        let socket = Self { 
             node_addr, 
             config,
-            sessions: Arc::new(RwLock::new(HashMap::new())), 
-            actor_sender,
-            relay_actor_sender,
-        }
+            actor_sender: to_actor_sender,
+            actor_receiver: from_actor_receiver,
+            relay_actor_sender: to_relay_actor_sender,
+            relay_actor_receiver: from_relay_actor_receiver,
+            actor_cancel_token,
+            relay_actor_cancel_token,
+        };
+        let socket_arc = Arc::new(socket);
+        let actor = SocketActor::new(Arc::clone(&socket_arc), from_actor_sender, cloned_actor_cancel_token)?;
+        // Spawn the actor
+        tokio::spawn(actor.run(to_actor_receiver));
+        let relay_actor = RelaySocketActor::new(Arc::clone(&socket_arc), from_relay_actor_sender, cloned_relay_actor_cancel_token)?;
+        // Spawn the relay actor
+        tokio::spawn(relay_actor.run(to_relay_actor_receiver));
+        Ok(SocketHandle {
+            inner: socket_arc,
+        })
+    }
+
+    /// Determines whether the node is directly reachable or requires a relay.
+    pub fn relay_required(&self, node_addr: &NodeAddr) -> bool {
+        let reachable_addrs = crate::connection::filter::filter_reachable_addrs(
+            node_addr.socket_addresses.iter().cloned().collect(),
+            self.config.include_loopback,
+        );
+        reachable_addrs.is_empty()
+    }
+
+    pub async fn send_message(&self, message: ActorMessage) -> Result<()> {
+        self.actor_sender.send(message).await.map_err(|e| anyhow!(e))
+    }
+
+    pub async fn receive_message(&mut self) -> Result<ActorMessage> {
+        self.actor_receiver.recv().await.ok_or_else(|| anyhow!("Actor receiver channel closed"))
+    }
+
+    pub async fn send_relay_message(&self, message: RelayActorMessage) -> Result<()> {
+        self.relay_actor_sender.send(message).await.map_err(|e| anyhow!(e))
+    }
+
+    pub async fn receive_relay_message(&mut self) -> Result<RelayActorMessage> {
+        self.relay_actor_receiver.recv().await.ok_or_else(|| anyhow!("Relay actor receiver channel closed"))
+    }
+
+    pub fn cancel_actor(&self) {
+        self.actor_cancel_token.cancel();
+    }
+
+    pub fn cancel_relay_actor(&self) {
+        self.relay_actor_cancel_token.cancel();
+    }
+}
+
+/* impl Socket {
+    pub fn new(node_addr: NodeAddr, config: SocketConfig) -> Result<SocketHandle> {
+        let (from_actor_sender, from_actor_receiver) = mpsc::channel::<ActorMessage>(256);
+        let (from_relay_actor_sender, from_relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
+        let (to_actor_sender, to_actor_receiver) = mpsc::channel::<ActorMessage>(256);
+        let (to_relay_actor_sender, to_relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
+        let socket = Self { 
+            node_addr, 
+            config,
+            actor_sender: to_actor_sender,
+            actor_receiver: from_actor_receiver,
+            relay_actor_sender: to_relay_actor_sender,
+            relay_actor_receiver: from_relay_actor_receiver,
+        };
+        let socket_arc = Arc::new(socket);
+        let actor = SocketActor::new(Arc::clone(&socket_arc), from_actor_sender)?;
+        // Spawn the actor
+        tokio::spawn(actor.run(to_actor_receiver));
+        let relay_actor = RelaySocketActor::new(Arc::clone(&socket_arc), from_relay_actor_sender)?;
+        // Spawn the relay actor
+        tokio::spawn(relay_actor.run(to_relay_actor_receiver));
+        Ok(SocketHandle {
+            inner: socket_arc,
+        })
     }
     /// Start listening for incoming connections
     pub async fn listen(&mut self) -> Result<()> {
@@ -435,3 +535,4 @@ where
         }
     }
 }
+ */
