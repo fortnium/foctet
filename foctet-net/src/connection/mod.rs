@@ -9,9 +9,9 @@ use foctet_core::{
     frame::{Frame, OperationId, StreamId},
     node::{ConnectionId, NodeAddr},
 };
-use quic::QuicStream;
+use quic::{QuicStream, QuicSendStream, QuicRecvStream};
 use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc, time::Instant};
-use tcp::TlsTcpStream;
+use tcp::{TlsTcpStream, TlsTcpSendStream, TlsTcpRecvStream};
 use tokio::sync::{Mutex, RwLock};
 
 #[derive(Debug)]
@@ -191,6 +191,219 @@ pub trait FoctetStream {
     /// Returns the remote address of the connection.
     fn remote_address(&self) -> SocketAddr;
 
+    /// Splits the stream into send and receive streams.
+    fn split(self) -> (SendStream, RecvStream);
+
+}
+
+#[allow(async_fn_in_trait)]
+pub trait FoctetSendStream {
+    // Returns the Connection ID
+    fn connection_id(&self) -> ConnectionId;
+
+    /// Returns the Stream ID
+    fn stream_id(&self) -> StreamId;
+
+    /// Returns the current operation ID.
+    fn operation_id(&self) -> OperationId;
+
+    /// Sends data over the stream
+    async fn send_data(&mut self, data: &[u8]) -> Result<OperationId>;
+
+    /// Send a frame over the stream
+    async fn send_frame(&mut self, frame: Frame) -> Result<OperationId>;
+
+    /// Send a file over the stream
+    async fn send_file(&mut self, file_path: &Path) -> Result<OperationId>;
+
+    /// Gracefully closes the stream.
+    async fn close(&mut self) -> Result<()>;
+
+    /// Returns the current state of the connection.
+    fn is_closed(&self) -> bool;
+
+    /// Returns the remote address of the connection.
+    fn remote_address(&self) -> SocketAddr;
+}
+
+#[allow(async_fn_in_trait)]
+pub trait FoctetRecvStream {
+    // Returns the Connection ID
+    fn connection_id(&self) -> ConnectionId;
+
+    /// Returns the Stream ID
+    fn stream_id(&self) -> StreamId;
+
+    /// Receives data from the stream
+    async fn receive_data(&mut self, buffer: &mut Vec<u8>) -> Result<usize>;
+
+    /// Receive a frame over the stream
+    async fn receive_frame(&mut self) -> Result<Frame>;
+
+    /// Receive a file over the stream
+    async fn receive_file(&mut self, file_path: &Path) -> Result<u64>;
+
+    /// Gracefully closes the stream.
+    async fn close(&mut self) -> Result<()>;
+
+    /// Returns the current state of the connection.
+    fn is_closed(&self) -> bool;
+
+    /// Returns the remote address of the connection.
+    fn remote_address(&self) -> SocketAddr;
+}
+
+#[derive(Debug)]
+pub enum SendStream {
+    Quic(QuicSendStream),
+    Tcp(TlsTcpSendStream),
+}
+
+impl FoctetSendStream for SendStream {
+    // Returns the Connection ID
+    fn connection_id(&self) -> ConnectionId {
+        match self {
+            SendStream::Quic(stream) => stream.connection_id(),
+            SendStream::Tcp(stream) => stream.connection_id(),
+        }
+    }
+
+    /// Returns the Stream ID
+    fn stream_id(&self) -> StreamId {
+        match self {
+            SendStream::Quic(stream) => stream.stream_id(),
+            SendStream::Tcp(stream) => stream.stream_id(),
+        }
+    }
+
+    /// Returns the current operation ID.
+    fn operation_id(&self) -> OperationId {
+        match self {
+            SendStream::Quic(stream) => stream.operation_id(),
+            SendStream::Tcp(stream) => stream.operation_id(),
+        }
+    }
+
+    /// Sends data over the stream
+    async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
+        match self {
+            SendStream::Quic(stream) => stream.send_data(data).await,
+            SendStream::Tcp(stream) => stream.send_data(data).await,
+        }
+    }
+
+    /// Send a frame over the stream
+    async fn send_frame(&mut self, frame: Frame) -> Result<OperationId> {
+        match self {
+            SendStream::Quic(stream) => stream.send_frame(frame).await,
+            SendStream::Tcp(stream) => stream.send_frame(frame).await,
+        }
+    }
+
+    /// Send a file over the stream
+    async fn send_file(&mut self, file_path: &Path) -> Result<OperationId> {
+        match self {
+            SendStream::Quic(stream) => stream.send_file(file_path).await,
+            SendStream::Tcp(stream) => stream.send_file(file_path).await,
+        }
+    }
+
+    /// Gracefully closes the stream.
+    async fn close(&mut self) -> Result<()> {
+        match self {
+            SendStream::Quic(stream) => stream.close().await,
+            SendStream::Tcp(stream) => stream.close().await,
+        }
+    }
+
+    /// Returns the current state of the connection.
+    fn is_closed(&self) -> bool {
+        match self {
+            SendStream::Quic(stream) => stream.is_closed(),
+            SendStream::Tcp(stream) => stream.is_closed(),
+        }
+    }
+
+    /// Returns the remote address of the connection.
+    fn remote_address(&self) -> SocketAddr {
+        match self {
+            SendStream::Quic(stream) => stream.remote_address(),
+            SendStream::Tcp(stream) => stream.remote_address(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum RecvStream {
+    Quic(QuicRecvStream),
+    Tcp(TlsTcpRecvStream),
+}
+
+impl FoctetRecvStream for RecvStream {
+    // Returns the Connection ID
+    fn connection_id(&self) -> ConnectionId {
+        match self {
+            RecvStream::Quic(stream) => stream.connection_id(),
+            RecvStream::Tcp(stream) => stream.connection_id(),
+        }
+    }
+
+    /// Returns the Stream ID
+    fn stream_id(&self) -> StreamId {
+        match self {
+            RecvStream::Quic(stream) => stream.stream_id(),
+            RecvStream::Tcp(stream) => stream.stream_id(),
+        }
+    }
+
+    /// Receives data from the stream
+    async fn receive_data(&mut self, buffer: &mut Vec<u8>) -> Result<usize> {
+        match self {
+            RecvStream::Quic(stream) => stream.receive_data(buffer).await,
+            RecvStream::Tcp(stream) => stream.receive_data(buffer).await,
+        }
+    }
+
+    /// Receive a frame over the stream
+    async fn receive_frame(&mut self) -> Result<Frame> {
+        match self {
+            RecvStream::Quic(stream) => stream.receive_frame().await,
+            RecvStream::Tcp(stream) => stream.receive_frame().await,
+        }
+    }
+
+    /// Receive a file over the stream
+    async fn receive_file(&mut self, file_path: &Path) -> Result<u64> {
+        match self {
+            RecvStream::Quic(stream) => stream.receive_file(file_path).await,
+            RecvStream::Tcp(stream) => stream.receive_file(file_path).await,
+        }
+    }
+
+    /// Gracefully closes the stream.
+    async fn close(&mut self) -> Result<()> {
+        match self {
+            RecvStream::Quic(stream) => stream.close().await,
+            RecvStream::Tcp(stream) => stream.close().await,
+        }
+    }
+
+    /// Returns the current state of the connection.
+    fn is_closed(&self) -> bool {
+        match self {
+            RecvStream::Quic(stream) => stream.is_closed(),
+            RecvStream::Tcp(stream) => stream.is_closed(),
+        }
+    }
+
+    /// Returns the remote address of the connection.
+    fn remote_address(&self) -> SocketAddr {
+        match self {
+            RecvStream::Quic(stream) => stream.remote_address(),
+            RecvStream::Tcp(stream) => stream.remote_address(),
+        }
+    }
+
 }
 
 #[derive(Debug)]
@@ -281,6 +494,19 @@ impl FoctetStream for NetworkStream {
         match self {
             NetworkStream::Quic(stream) => stream.remote_address(),
             NetworkStream::Tcp(stream) => stream.remote_address(),
+        }
+    }
+
+    fn split(self) -> (SendStream, RecvStream) {
+        match self {
+            NetworkStream::Quic(stream) => {
+                let (send, recv) = stream.split();
+                (send, recv)
+            }
+            NetworkStream::Tcp(stream) => {
+                let (send, recv) = stream.split();
+                (send, recv)
+            }
         }
     }
 }
