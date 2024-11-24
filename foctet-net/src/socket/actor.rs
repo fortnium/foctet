@@ -4,7 +4,7 @@ use foctet_core::{frame::{Frame, OperationId, StreamId}, node::{ConnectionId, No
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;
-use crate::{connection::{quic::QuicSocket, tcp::TcpSocket, FoctetStream, NetworkStream, Session}, message::{AckMessage, ActorMessage, ControlCommand, ReceiveType, SessionCommand, TransferPayload}, socket::{ConnectionInfo, ConnectionType}};
+use crate::{connection::{quic::{QuicConnection, QuicSocket}, tcp::{TcpSocket, TlsTcpStream}, FoctetStream, NetworkStream, Session}, message::{AckMessage, ActorMessage, ControlCommand, ReceiveType, SessionCommand, TransferPayload}, socket::{ConnectionInfo, ConnectionType}};
 
 use super::Socket;
 
@@ -221,6 +221,65 @@ impl SocketActor {
         if let Some(mut session) = sessions.remove(&node_id) {
             session.close().await;
         }
+    }
+
+    async fn listen(&mut self) -> Result<()> {
+        // Start the QUIC listener
+        let (quic_conn_tx, mut quic_conn_rx) = mpsc::channel::<QuicConnection>(100);
+        let mut quic_server_socket = self.quic_socket.clone();
+        let cloned_cancel_token = self.cancel_token.clone();
+        tracing::info!("Starting QUIC listener...");
+        tokio::spawn(async move {
+            match quic_server_socket.listen(quic_conn_tx, cloned_cancel_token).await {
+                Ok(_) => {
+                    tracing::info!("QUIC listener stopped.");
+                }
+                Err(e) => {
+                    tracing::error!("Error listening: {:?}", e);
+                }
+            }
+        });
+        // Start the TCP listener
+        let (tcp_conn_tx, mut tcp_conn_rx) = mpsc::channel::<TlsTcpStream>(100);
+        let mut tcp_server_socket = self.tcp_socket.clone();
+        let cloned_cancel_token = self.cancel_token.clone();
+        tracing::info!("Starting TCP listener...");
+        tokio::spawn(async move {
+            match tcp_server_socket.listen(tcp_conn_tx, cloned_cancel_token).await {
+                Ok(_) => {
+                    tracing::info!("TCP listener stopped.");
+                }
+                Err(e) => {
+                    tracing::error!("Error listening: {:?}", e);
+                }
+            }
+        });
+        // Handle incoming connections
+        // キャンセルトークンを監視しながら接続を処理
+        let cancel_token = self.cancel_token.clone();
+        tokio::select! {
+            _ = cancel_token.cancelled() => {
+                tracing::info!("SocketActor listener cancelled.");
+            }
+            _ = async {
+                loop {
+                    tokio::select! {
+                        // QUIC からの接続を処理
+                        Some(quic_connection) = quic_conn_rx.recv() => {
+                            // TODO!
+                            //self.handle_quic_connection(quic_connection).await;
+                        }
+                        // TCP からの接続を処理
+                        Some(tcp_connection) = tcp_conn_rx.recv() => {
+                            // TODO!
+                            //self.handle_tcp_connection(tcp_connection).await;
+                        }
+                    }
+                }
+            } => {}
+        }
+        tracing::info!("SocketActor listener stopped.");
+        Ok(())
     }
 
     pub async fn get_available_stream(&self, node_id: NodeId) -> Option<Arc<Mutex<NetworkStream>>> {
