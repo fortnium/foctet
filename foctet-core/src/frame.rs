@@ -7,6 +7,17 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+pub mod frame_flags {
+    /// The request flags bitmasks
+    pub const FLAG_REQUEST: u8 = 0b0000_0001;
+    /// The response flags bitmasks
+    pub const FLAG_RESPONSE: u8 = 0b0000_0010;
+    /// The priority flags bitmasks
+    pub const FLAG_PRIORITY: u8 = 0b0000_0100;
+    /// The fragmentation flags bitmasks
+    pub const FLAG_FRAGMENTED: u8 = 0b0000_1000;
+}
+
 /// The frame structure that is sent between the peers
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct Frame {
@@ -52,6 +63,50 @@ impl Frame {
     /// Get legnth of the frame
     pub fn len(&self) -> usize {
         bincode::serialize(self).unwrap_or_default().len()
+    }
+    /// Sets a flag.
+    pub fn set_flag(&mut self, flag: u8) {
+        self.flags |= flag;
+    }
+    /// Unsets a flag.
+    pub fn unset_flag(&mut self, flag: u8) {
+        self.flags &= !flag;
+    }
+    /// Checks if a flag is set.
+    pub fn has_flag(&self, flag: u8) -> bool {
+        self.flags & flag != 0
+    }
+    /// Check if the frame is a request
+    pub fn is_request(&self) -> bool {
+        self.flags & frame_flags::FLAG_REQUEST != 0
+    }
+    /// Check if the frame is a response
+    pub fn is_response(&self) -> bool {
+        self.flags & frame_flags::FLAG_RESPONSE != 0
+    }
+    /// Check if the frame is a priority frame
+    pub fn is_priority(&self) -> bool {
+        self.flags & frame_flags::FLAG_PRIORITY != 0
+    }
+    /// Check if the frame is a fragmented frame
+    pub fn is_fragmented(&self) -> bool {
+        self.flags & frame_flags::FLAG_FRAGMENTED != 0
+    }
+    /// Set the frame as a request
+    pub fn set_request(&mut self) {
+        self.flags |= frame_flags::FLAG_REQUEST;
+    }
+    /// Set the frame as a response
+    pub fn set_response(&mut self) {
+        self.flags |= frame_flags::FLAG_RESPONSE;
+    }
+    /// Set the frame as a priority frame
+    pub fn set_priority(&mut self) {
+        self.flags |= frame_flags::FLAG_PRIORITY;
+    }
+    /// Set the frame as a fragmented frame
+    pub fn set_fragmented(&mut self) {
+        self.flags |= frame_flags::FLAG_FRAGMENTED;
     }
     /// Get length of payload
     pub fn payload_len(&self) -> usize {
@@ -108,6 +163,26 @@ impl FrameBuilder {
     /// Sets the flags.
     pub fn with_flags(mut self, flags: u8) -> Self {
         self.flags = flags;
+        self
+    }
+    /// Sets the flags as a request.
+    pub fn as_request(mut self) -> Self {
+        self.flags |= frame_flags::FLAG_REQUEST;
+        self
+    }
+    /// Sets the flags as a response.
+    pub fn as_response(mut self) -> Self {
+        self.flags |= frame_flags::FLAG_RESPONSE;
+        self
+    }
+    /// Sets the flags as a priority.
+    pub fn as_priority(mut self) -> Self {
+        self.flags |= frame_flags::FLAG_PRIORITY;
+        self
+    }
+    /// Sets the flags as a fragmented.
+    pub fn as_fragmented(mut self) -> Self {
+        self.flags |= frame_flags::FLAG_FRAGMENTED;
         self
     }
     /// Sets the payload.
