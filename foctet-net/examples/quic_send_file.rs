@@ -10,6 +10,7 @@ use foctet_net::connection::{
     FoctetStream,
 };
 use foctet_net::{socket::SocketConfig, tls::TlsConfig};
+use tokio_util::sync::CancellationToken;
 use std::path::PathBuf;
 use std::{
     collections::HashMap,
@@ -97,9 +98,10 @@ async fn main() -> Result<()> {
 
     let (conn_tx, mut conn_rx) = mpsc::channel::<QuicConnection>(100);
     tracing::info!("Starting QUIC listener...");
+    let cancel_token = CancellationToken::new();
     // Start the QUIC listener
     tokio::spawn(async move {
-        match quic_socket.listen(conn_tx).await {
+        match quic_socket.listen(conn_tx, cancel_token).await {
             Ok(_) => {
                 tracing::info!("QUIC listener stopped.");
             }

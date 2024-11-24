@@ -10,6 +10,7 @@ use foctet_net::connection::{
     FoctetStream,
 };
 use foctet_net::{socket::SocketConfig, tls::TlsConfig};
+use tokio_util::sync::CancellationToken;
 use std::path::PathBuf;
 use std::{
     collections::HashMap,
@@ -97,9 +98,10 @@ async fn main() -> Result<()> {
 
     let (stream_tx, mut stream_rx) = mpsc::channel::<TlsTcpStream>(100);
     tracing::info!("Starting TCP listener...");
+    let cancel_token = CancellationToken::new();
     // Start the TCP listener
     tokio::spawn(async move {
-        match tcp_socket.listen(stream_tx).await {
+        match tcp_socket.listen(stream_tx, cancel_token).await {
             Ok(_) => {
                 tracing::info!("TCP listener stopped.");
             }
