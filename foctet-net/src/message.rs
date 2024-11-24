@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use foctet_core::{frame::{Frame, OperationId}, node::{NodeAddr, NodeId}};
 
+use crate::socket::ConnectionInfo;
+
 /// Actor messages
 #[derive(Debug)]
 pub enum ActorMessage {
@@ -80,9 +82,7 @@ pub enum ControlCommand {
 pub enum AckMessage {
     Success,
     Failure(anyhow::Error),
-    Connected {
-        node_id: NodeId,
-    },
+    Connected(ConnectionInfo),
     Disconnected(NodeId),
     TransferComplete {
         operation_id: OperationId,

@@ -11,18 +11,18 @@ use foctet_core::default::{
 };
 use tokio_util::sync::CancellationToken;
 use crate::device;
-use crate::message::{ActorMessage, RelayActorMessage};
+use crate::message::{AckMessage, ActorMessage, RelayActorMessage, SessionCommand};
 use crate::relay::actor::RelaySocketActor;
 use crate::tls::TlsConfig;
 
 use anyhow::Result;
 use anyhow::anyhow;
-use foctet_core::node::NodeAddr;
-use tokio::sync::mpsc;
+use foctet_core::node::{NodeAddr, NodeId};
+use tokio::sync::{mpsc, RwLock};
 use std::sync::Arc;
 use std::time::Duration;
 use std::path::PathBuf;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, SocketAddr};
 
 /// The type of socket and transport protocol.
@@ -39,6 +39,46 @@ pub enum SocketType {
 impl Default for SocketType {
     fn default() -> Self {
         SocketType::Both
+    }
+}
+
+/// Represents the type of connection used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionType {
+    /// Direct connection to the target node.
+    Direct,
+    /// Connection via a relay server.
+    Relay,
+}
+
+/// Connection Information
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    pub node_id: NodeId,
+    pub socket_addr: SocketAddr,
+    pub connection_type: ConnectionType,
+}
+
+impl ConnectionInfo {
+    pub fn new(node_id: NodeId, socket_addr: SocketAddr, connection_type: ConnectionType) -> Self {
+        Self {
+            node_id,
+            socket_addr,
+            connection_type,
+        }
+    }
+}
+
+/// Determines whether the node is directly reachable or requires a relay.
+fn relay_required(node_addr: &NodeAddr, include_loopback: bool) -> ConnectionType {
+    let reachable_addrs = crate::connection::filter::filter_reachable_addrs(
+        node_addr.socket_addresses.iter().cloned().collect(),
+        include_loopback,
+    );
+    if reachable_addrs.is_empty() {
+        return ConnectionType::Relay;
+    } else {
+        return ConnectionType::Direct;
     }
 }
 
@@ -240,8 +280,9 @@ impl SocketConfig {
 
 /// The socket handle.
 /// It is a reference-counted pointer to the socket.
+#[derive(Debug)]
 pub struct SocketHandle {
-    inner: Arc<Socket>,
+    inner: Arc<RwLock<Socket>>,
 }
 
 impl Clone for SocketHandle {
@@ -253,11 +294,72 @@ impl Clone for SocketHandle {
 }
 
 impl SocketHandle {
-    // TODO!
+    /// Connects to a node, deciding whether to use a relay or direct connection.
+    pub async fn connect(&self, node_addr: NodeAddr) -> Result<()> {
+        let mut socket = self.inner.write().await;
+        match relay_required(&node_addr, socket.config.include_loopback) {
+            ConnectionType::Direct => {
+                let message = ActorMessage::SessionManagement(SessionCommand::Connect(node_addr));
+                match socket.send_message(message).await {
+                    Ok(_) => (),
+                    Err(e) => return Err(e),
+                }
+                match socket.receive_message().await {
+                    Ok(message) => {
+                        match message {
+                            ActorMessage::Ack(ack_message) => {
+                                match ack_message {
+                                    AckMessage::Connected(connection_info) => {
+                                        socket.connections.insert(connection_info.node_id.clone(), connection_info);
+                                        Ok(())
+                                    },
+                                    _ => Err(anyhow!("Unexpected ack message")),
+                                }
+                            },
+                            _ => Err(anyhow!("Unexpected message")),
+                        }
+                    },
+                    Err(e) => Err(e),
+                }
+            },
+            ConnectionType::Relay => {
+                if let Some(_relay_addr) = &node_addr.relay_addr {
+                    let message = RelayActorMessage::SessionManagement(SessionCommand::Connect(node_addr));
+                    socket.send_relay_message(message).await
+                } else {
+                    Err(anyhow!("Relay required, but relay address is missing"))
+                }
+            },
+        }
+    }
+    pub async fn disconnect(&self, node_id: NodeId) -> Result<()> {
+        let socket = self.inner.read().await;
+        if let Some(connection_info) = socket.connections.get(&node_id) {
+            match connection_info.connection_type {
+                ConnectionType::Direct => {
+                    let message = ActorMessage::SessionManagement(SessionCommand::Disconnect(node_id));
+                    socket.send_message(message).await
+                },
+                ConnectionType::Relay => {
+                    let message = RelayActorMessage::SessionManagement(SessionCommand::Disconnect(node_id));
+                    socket.send_relay_message(message).await
+                },
+            }
+        } else {
+            Err(anyhow!("Connection info not found"))
+        }
+    }
+    /// Shuts down the socket and cancels all associated actors.
+    pub async fn shutdown(&self) {
+        let socket = self.inner.read().await;
+        socket.cancel_actor();
+        socket.cancel_relay_actor();
+    }
 }
 
 /// The foctet socket.
 /// It can be either a QUIC socket, a TCP socket, or both.
+#[derive(Debug)]
 pub struct Socket {
     /// The node address of this socket.
     pub node_addr: NodeAddr,
@@ -275,10 +377,12 @@ pub struct Socket {
     actor_cancel_token: CancellationToken,
     /// The relay actor cancellation token.
     relay_actor_cancel_token: CancellationToken,
+    /// A cache to determine if a relay is required for a given NodeId.
+    connections: HashMap<NodeId, ConnectionInfo>,
 }
 
 impl Socket {
-    pub fn new(node_addr: NodeAddr, config: SocketConfig) -> Result<SocketHandle> {
+    pub async fn new(node_addr: NodeAddr, config: SocketConfig) -> Result<SocketHandle> {
         let (from_actor_sender, from_actor_receiver) = mpsc::channel::<ActorMessage>(256);
         let (from_relay_actor_sender, from_relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
         let (to_actor_sender, to_actor_receiver) = mpsc::channel::<ActorMessage>(256);
@@ -298,26 +402,18 @@ impl Socket {
             relay_actor_receiver: from_relay_actor_receiver,
             actor_cancel_token,
             relay_actor_cancel_token,
+            connections: HashMap::new(),
         };
-        let socket_arc = Arc::new(socket);
-        let actor = SocketActor::new(Arc::clone(&socket_arc), from_actor_sender, cloned_actor_cancel_token)?;
+        let socket_arc = Arc::new(RwLock::new(socket));
+        let actor = SocketActor::new(Arc::clone(&socket_arc), from_actor_sender, cloned_actor_cancel_token).await?;
         // Spawn the actor
         tokio::spawn(actor.run(to_actor_receiver));
-        let relay_actor = RelaySocketActor::new(Arc::clone(&socket_arc), from_relay_actor_sender, cloned_relay_actor_cancel_token)?;
+        let relay_actor = RelaySocketActor::new(Arc::clone(&socket_arc), from_relay_actor_sender, cloned_relay_actor_cancel_token).await?;
         // Spawn the relay actor
         tokio::spawn(relay_actor.run(to_relay_actor_receiver));
         Ok(SocketHandle {
             inner: socket_arc,
         })
-    }
-
-    /// Determines whether the node is directly reachable or requires a relay.
-    pub fn relay_required(&self, node_addr: &NodeAddr) -> bool {
-        let reachable_addrs = crate::connection::filter::filter_reachable_addrs(
-            node_addr.socket_addresses.iter().cloned().collect(),
-            self.config.include_loopback,
-        );
-        reachable_addrs.is_empty()
     }
 
     pub async fn send_message(&self, message: ActorMessage) -> Result<()> {

@@ -3,7 +3,6 @@ use std::{fmt, path::PathBuf};
 use crate::{
     content::ContentId,
     hash::Blake3Hash,
-    node::{ConnectionId, NodeId},
     time::UnixTimestamp,
 };
 use serde::{Deserialize, Serialize};
@@ -220,7 +219,7 @@ pub enum Payload {
     Text(String),
     FileMetadata(FileMetadata),
     Metadata(Metadata),
-    ConnectionInfo(ConnectionInfo),
+    //ConnectionInfo(ConnectionInfo),
     ContentId(ContentId),
 }
 
@@ -239,10 +238,10 @@ impl Payload {
                 // Serialize the metadata to bytes and get the size
                 bincode::serialize(metadata).unwrap_or_default().len()
             }
-            Self::ConnectionInfo(info) => {
+            /* Self::ConnectionInfo(info) => {
                 // Serialize the connection info to bytes and get the size
                 bincode::serialize(info).unwrap_or_default().len()
-            }
+            } */
             Self::ContentId(id) => {
                 // Serialize the content ID to bytes and get the size
                 bincode::serialize(id).unwrap_or_default().len()
@@ -269,10 +268,10 @@ impl Payload {
     pub fn metadata(metadata: Metadata) -> Self {
         Self::Metadata(metadata)
     }
-    /// Create a new connection info payload
+    /* /// Create a new connection info payload
     pub fn connection_info(info: ConnectionInfo) -> Self {
         Self::ConnectionInfo(info)
-    }
+    } */
     /// Create a new content ID payload
     pub fn content_id(id: ContentId) -> Self {
         Self::ContentId(id)
@@ -320,8 +319,8 @@ pub struct LocalFileMetadata {
     pub accessed: UnixTimestamp,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+/* #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct ConnectionInfo {
     pub node_id: NodeId,
     pub connection_id: Option<ConnectionId>,
-}
+} */
