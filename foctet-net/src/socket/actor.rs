@@ -47,6 +47,22 @@ impl SocketActor {
     }
 
     pub async fn run(mut self, mut receiver: mpsc::Receiver<ActorMessage>) {
+        // Run QUIC listener
+        let quic_sessions = self.sessions.clone();
+        let quic_socket = self.quic_socket.clone();
+        let quic_cancel_token = self.cancel_token.clone();
+        tokio::spawn(async move {
+            Self::run_quic_listener(quic_sessions, quic_socket, quic_cancel_token).await;
+        });
+        // Run TCP listener
+        let tcp_sessions = self.sessions.clone();
+        let tcp_socket = self.tcp_socket.clone();
+        let tcp_cancel_token = self.cancel_token.clone();
+        tokio::spawn(async move {
+            Self::run_tcp_listener(tcp_sessions, tcp_socket, tcp_cancel_token).await;
+        });
+
+        // Run actor message loop
         loop {
             tokio::select! {
                 // Receive messages from the ActorMessage channel
@@ -222,63 +238,51 @@ impl SocketActor {
         }
     }
 
-    async fn listen(&mut self) -> Result<()> {
-        // Start the QUIC listener
+    async fn run_quic_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, quic_socket: QuicSocket, cancel_token: CancellationToken) {
         let (quic_conn_tx, mut quic_conn_rx) = mpsc::channel::<QuicConnection>(100);
-        let mut quic_server_socket = self.quic_socket.clone();
-        let cloned_cancel_token = self.cancel_token.clone();
-        tracing::info!("Starting QUIC listener...");
+        let mut quic_server_socket = quic_socket;
+        let cloned_cancel_token = cancel_token.clone();
         tokio::spawn(async move {
-            match quic_server_socket.listen(quic_conn_tx, cloned_cancel_token).await {
-                Ok(_) => {
-                    tracing::info!("QUIC listener stopped.");
-                }
-                Err(e) => {
-                    tracing::error!("Error listening: {:?}", e);
-                }
+            if let Err(e) = quic_server_socket.listen(quic_conn_tx, cloned_cancel_token).await {
+                tracing::error!("QUIC listener error: {:?}", e);
             }
         });
-        // Start the TCP listener
-        let (tcp_conn_tx, mut tcp_conn_rx) = mpsc::channel::<TlsTcpStream>(100);
-        let mut tcp_server_socket = self.tcp_socket.clone();
-        let cloned_cancel_token = self.cancel_token.clone();
-        tracing::info!("Starting TCP listener...");
-        tokio::spawn(async move {
-            match tcp_server_socket.listen(tcp_conn_tx, cloned_cancel_token).await {
-                Ok(_) => {
-                    tracing::info!("TCP listener stopped.");
-                }
-                Err(e) => {
-                    tracing::error!("Error listening: {:?}", e);
-                }
+    
+        while let Some(mut quic_connection) = quic_conn_rx.recv().await {
+            if cancel_token.is_cancelled() {
+                break;
             }
-        });
-        // Handle incoming connections
-        // キャンセルトークンを監視しながら接続を処理
-        let cancel_token = self.cancel_token.clone();
-        tokio::select! {
-            _ = cancel_token.cancelled() => {
-                tracing::info!("SocketActor listener cancelled.");
-            }
-            _ = async {
-                loop {
-                    tokio::select! {
-                        // QUIC からの接続を処理
-                        Some(quic_connection) = quic_conn_rx.recv() => {
-                            // TODO!
-                            //self.handle_quic_connection(quic_connection).await;
-                        }
-                        // TCP からの接続を処理
-                        Some(tcp_connection) = tcp_conn_rx.recv() => {
-                            // TODO!
-                            //self.handle_tcp_connection(tcp_connection).await;
-                        }
-                    }
-                }
-            } => {}
+            let node_id = quic_connection.node_id.clone();
+            let stream = quic_connection.accept_stream().await.unwrap();
+            let stream_id = stream.stream_id();
+            let node_addr = NodeAddr::new(node_id.clone());
+            let session = Session::new_with_quic_connection(ConnectionId::new(), node_addr, quic_connection);
+            session.add_stream(stream_id, NetworkStream::Quic(stream)).await;
+            sessions.write().await.insert(node_id, session);
         }
-        tracing::info!("SocketActor listener stopped.");
-        Ok(())
+    }
+    
+    async fn run_tcp_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, tcp_socket: TcpSocket, cancel_token: CancellationToken) {
+        let (tcp_conn_tx, mut tcp_conn_rx) = mpsc::channel::<TlsTcpStream>(100);
+        let mut tcp_server_socket = tcp_socket;
+        let cloned_cancel_token = cancel_token.clone();
+        tokio::spawn(async move {
+            if let Err(e) = tcp_server_socket.listen(tcp_conn_tx, cloned_cancel_token).await {
+                tracing::error!("TCP listener error: {:?}", e);
+            }
+        });
+    
+        while let Some(tcp_connection) = tcp_conn_rx.recv().await {
+            if cancel_token.is_cancelled() {
+                break;
+            }
+            let node_id = tcp_connection.node_id.clone();
+            let stream_id = tcp_connection.stream_id();
+            let node_addr = NodeAddr::new(node_id.clone());
+            let session = Session::new(ConnectionId::new(), node_addr);
+            session.add_stream(stream_id, NetworkStream::Tcp(tcp_connection)).await;
+            sessions.write().await.insert(node_id, session);
+        }
     }
 
     pub async fn get_available_stream(&self, node_id: NodeId) -> Option<(Arc<Mutex<SendStream>>, Arc<Mutex<RecvStream>>)> {
