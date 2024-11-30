@@ -434,6 +434,25 @@ impl FoctetStream for TlsTcpStream {
         let recv_stream = super::RecvStream::Tcp(tcp_recv_stream);
         (send_stream, recv_stream)
     }
+    fn merge(send_stream: super::SendStream, recv_stream: super::RecvStream) -> Result<Self> where Self: Sized {
+        match (send_stream, recv_stream) {
+            (super::SendStream::Tcp(tcp_send_stream), super::RecvStream::Tcp(tcp_recv_stream)) => {
+                let stream: TlsStream<TcpStream> = tcp_recv_stream.recv_stream.unsplit(tcp_send_stream.send_stream);
+                Ok(Self {
+                    stream: stream,
+                    node_id: tcp_send_stream.node_id,
+                    stream_id: tcp_send_stream.stream_id,
+                    connection_id: tcp_send_stream.connection_id,
+                    send_buffer_size: tcp_send_stream.send_buffer_size,
+                    receive_buffer_size: tcp_recv_stream.receive_buffer_size,
+                    is_closed: tcp_send_stream.is_closed,
+                    next_operation_id: tcp_send_stream.next_operation_id,
+                    remote_address: tcp_send_stream.remote_address,
+                })
+            }
+            _ => Err(anyhow!("Invalid stream types")),
+        }
+    }
 }
 
 #[derive(Clone)]

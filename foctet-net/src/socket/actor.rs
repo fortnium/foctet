@@ -4,7 +4,7 @@ use foctet_core::{frame::{Frame, OperationId, StreamId}, node::{ConnectionId, No
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;
-use crate::{connection::{quic::{QuicConnection, QuicSocket}, tcp::{TcpSocket, TlsTcpStream}, FoctetStream, NetworkStream, Session}, message::{AckMessage, ActorMessage, ControlCommand, ReceiveType, SessionCommand, TransferPayload}, socket::{ConnectionInfo, ConnectionType}};
+use crate::{connection::{quic::{QuicConnection, QuicSocket}, tcp::{TcpSocket, TlsTcpStream}, FoctetRecvStream, FoctetSendStream, FoctetStream, NetworkStream, RecvStream, SendStream, Session}, message::{AckMessage, ActorMessage, ControlCommand, ReceiveType, SessionCommand, TransferPayload}, socket::{ConnectionInfo, ConnectionType}};
 
 use super::Socket;
 
@@ -181,13 +181,12 @@ impl SocketActor {
             Ok(mut connection) => {
                 tracing::info!("Successfully connected to {:?} via QUIC", node_addr.node_id);
                 let stream = connection.open_stream().await?;
+                let stream_id = stream.stream_id();
                 // Create session
                 let connection_id = ConnectionId::new();
                 let socket_addr = connection.remote_address();
                 let session = Session::new_with_quic_connection(connection_id, node_addr.clone(), connection);
-                let stream_id = stream.stream_id();
-                let stream_arc = Arc::new(Mutex::new(NetworkStream::Quic(stream)));
-                session.add_stream(stream_id, stream_arc).await;
+                session.add_stream(stream_id, NetworkStream::Quic(stream)).await;
                 self.sessions.write().await.insert(node_addr.node_id.clone(), session);
                 return Ok(socket_addr);
             }
@@ -202,10 +201,10 @@ impl SocketActor {
                 tracing::info!("Successfully connected to {:?} via TCP", node_addr.node_id);
                 let stream_id = stream.stream_id();
                 let socket_addr = stream.remote_address();
-                let stream_arc = Arc::new(Mutex::new(NetworkStream::Tcp(stream)));
+                // Create session
                 let connection_id = ConnectionId::new();
                 let session = Session::new(connection_id, node_addr.clone());
-                session.add_stream(stream_id, stream_arc).await;
+                session.add_stream(stream_id, NetworkStream::Tcp(stream)).await;
                 self.sessions.write().await.insert(node_addr.node_id.clone(), session);
                 return Ok(socket_addr);
             }
@@ -282,35 +281,53 @@ impl SocketActor {
         Ok(())
     }
 
-    pub async fn get_available_stream(&self, node_id: NodeId) -> Option<Arc<Mutex<NetworkStream>>> {
+    pub async fn get_available_stream(&self, node_id: NodeId) -> Option<(Arc<Mutex<SendStream>>, Arc<Mutex<RecvStream>>)> {
         let sessions = self.sessions.read().await;
         let session = sessions.get(&node_id)?;
-        session.get_available_stream().await
+        let (send_stream, recv_stream) = session.get_available_stream().await?;
+        Some((send_stream, recv_stream))
     }
 
-    pub async fn open_stream(&mut self, node_id: NodeId) -> Result<Arc<Mutex<NetworkStream>>> {
+    pub async fn open_stream(&mut self, node_id: NodeId) -> Result<(Arc<Mutex<SendStream>>, Arc<Mutex<RecvStream>>)> {
         let mut sessions = self.sessions.write().await;
         let session = sessions.get_mut(&node_id).ok_or(anyhow::anyhow!("Session not found"))?;
         if let Some(quic_connection) = &mut session.quic_connection {
+            // Open a new QUIC stream
             let stream = quic_connection.open_stream().await?;
             let stream_id = stream.stream_id();
-            let stream_arc = Arc::new(Mutex::new(NetworkStream::Quic(stream)));
-            session.add_stream(stream_id, Arc::clone(&stream_arc)).await;
-            return Ok(stream_arc);
+            session.add_stream(stream_id, NetworkStream::Quic(stream)).await;
+            match session.get_stream(&stream_id).await {
+                Some(stream) => {
+                    return Ok(stream);
+                }
+                None => {
+                    return Err(anyhow::anyhow!("Failed to open stream"));
+                }
+            }
         } else {
             // Open a new TCP stream
             let stream = self.tcp_socket.connect_node(session.node_addr.clone()).await?;
             let stream_id = stream.stream_id();
-            let stream_arc = Arc::new(Mutex::new(NetworkStream::Tcp(stream)));
-            session.add_stream(stream_id, Arc::clone(&stream_arc)).await;
-            return Ok(stream_arc);
+            session.add_stream(stream_id, NetworkStream::Tcp(stream)).await;
+            match session.get_stream(&stream_id).await {
+                Some(stream) => {
+                    return Ok(stream);
+                }
+                None => {
+                    return Err(anyhow::anyhow!("Failed to open stream"));
+                }
+            }
         }
     }
 
-    pub async fn get_stream(&mut self, node_id: NodeId) -> Result<Arc<Mutex<NetworkStream>>> {
+    pub async fn get_stream(&mut self, node_id: NodeId) -> Result<(Arc<Mutex<SendStream>>, Arc<Mutex<RecvStream>>)> {
         match self.get_available_stream(node_id.clone()).await {
-            Some(stream) => Ok(stream),
-            None => self.open_stream(node_id).await,
+            Some(stream) => {
+                return Ok(stream);
+            }
+            None => {
+                self.open_stream(node_id.clone()).await
+            }
         }
     }
 
@@ -318,7 +335,7 @@ impl SocketActor {
         &self,
         node_id: NodeId,
         stream_id: StreamId,
-    ) -> Option<Arc<Mutex<NetworkStream>>> {
+    ) -> Option<(Arc<Mutex<SendStream>>, Arc<Mutex<RecvStream>>)> {
         let sessions = self.sessions.read().await;
         let session = sessions.get(&node_id)?;
         let stream = session.get_stream(&stream_id).await?;
@@ -331,9 +348,9 @@ impl SocketActor {
         frame: Frame,
     ) -> Result<OperationId> {
         match self.get_stream(node_id).await {
-            Ok(stream) => {
-                let mut stream = stream.lock().await;
-                stream.send_frame(frame).await
+            Ok((send_stream, _recv_stream)) => {
+                let mut send_stream = send_stream.lock().await;
+                send_stream.send_frame(frame).await
             }
             Err(e) => {
                 Err(e)
@@ -346,9 +363,9 @@ impl SocketActor {
         node_id: NodeId,
     ) -> Result<Frame> {
         match self.get_stream(node_id).await {
-            Ok(stream) => {
-                let mut stream = stream.lock().await;
-                stream.receive_frame().await
+            Ok((_send_stream, recv_stream)) => {
+                let mut recv_stream = recv_stream.lock().await;
+                recv_stream.receive_frame().await
             }
             Err(e) => {
                 Err(e)
@@ -362,9 +379,9 @@ impl SocketActor {
         path: PathBuf,
     ) -> Result<OperationId> {
         match self.get_stream(node_id).await {
-            Ok(stream) => {
-                let mut stream = stream.lock().await;
-                stream.send_file(&path).await
+            Ok((send_stream, _recv_stream)) => {
+                let mut send_stream = send_stream.lock().await;
+                send_stream.send_file(&path).await
             }
             Err(e) => {
                 Err(e)
@@ -378,9 +395,9 @@ impl SocketActor {
         path: &std::path::Path,
     ) -> Result<u64> {
         match self.get_stream(node_id).await {
-            Ok(stream) => {
-                let mut stream = stream.lock().await;
-                stream.receive_file(path).await
+            Ok((_send_stream, recv_stream)) => {
+                let mut recv_stream = recv_stream.lock().await;
+                recv_stream.receive_file(path).await
             }
             Err(e) => {
                 Err(e)
@@ -408,7 +425,8 @@ impl SocketActor {
     }
 
     pub async fn run_cleanup_task(&self) {
-        let mut interval = tokio::time::interval(Duration::from_secs(60)); // 毎分チェック
+        // TODO: Get cleanup interval from config
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
             self.cleanup_old_sessions().await;

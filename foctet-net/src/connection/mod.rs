@@ -16,43 +16,71 @@ use tokio::sync::{Mutex, RwLock};
 
 #[derive(Debug)]
 pub struct StreamMap {
-    streams: Arc<RwLock<HashMap<StreamId, Arc<Mutex<NetworkStream>>>>>,
+    //streams: Arc<RwLock<HashMap<StreamId, Arc<Mutex<NetworkStream>>>>>,
+    /// The map of send streams
+    send_streams: Arc<RwLock<HashMap<StreamId, Arc<Mutex<SendStream>>>>>,
+    /// The map of receive streams
+    recv_streams: Arc<RwLock<HashMap<StreamId, Arc<Mutex<RecvStream>>>>>,
 }
 
 impl StreamMap {
     pub fn new() -> Self {
         Self {
-            streams: Arc::new(RwLock::new(HashMap::new())),
+            send_streams: Arc::new(RwLock::new(HashMap::new())),
+            recv_streams: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub async fn add_stream(&self, stream_id: StreamId, stream: Arc<Mutex<NetworkStream>>) {
-        let mut streams = self.streams.write().await;
-        streams.insert(stream_id, stream);
+    /// Add SendStream to the map
+    pub async fn add_send_stream(&self, stream_id: StreamId, send_stream: Arc<Mutex<SendStream>>) {
+        let mut send_streams = self.send_streams.write().await;
+        send_streams.insert(stream_id, send_stream);
     }
 
-    pub async fn get_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
-        let streams = self.streams.read().await;
-        streams.get(stream_id).cloned()
+    /// Add RecvStream to the map
+    pub async fn add_recv_stream(&self, stream_id: StreamId, recv_stream: Arc<Mutex<RecvStream>>) {
+        let mut recv_streams = self.recv_streams.write().await;
+        recv_streams.insert(stream_id, recv_stream);
     }
 
+    // Get SendStream from the map
+    pub async fn get_send_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<SendStream>>> {
+        let send_streams = self.send_streams.read().await;
+        send_streams.get(stream_id).cloned()
+    }
+
+    /// Get RecvStream from the map
+    pub async fn get_recv_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<RecvStream>>> {
+        let recv_streams = self.recv_streams.read().await;
+        recv_streams.get(stream_id).cloned()
+    }
+
+    /// Remove SendStream from the map
+    pub async fn remove_send_stream(&self, stream_id: &StreamId) {
+        let mut send_streams = self.send_streams.write().await;
+        send_streams.remove(stream_id);
+    }
+
+    /// Remove RecvStream from the map
+    pub async fn remove_recv_stream(&self, stream_id: &StreamId) {
+        let mut recv_streams = self.recv_streams.write().await;
+        recv_streams.remove(stream_id);
+    }
+
+    /// Remove Stream from the map
     pub async fn remove_stream(&self, stream_id: &StreamId) -> Result<()> {
-        let mut streams = self.streams.write().await;
-        if let Some(stream) = streams.remove(stream_id) {
-            // Close the stream
-            let mut stream = stream.lock().await;
-            return stream.close().await
-        }
+        self.remove_send_stream(stream_id).await;
+        self.remove_recv_stream(stream_id).await;
         Ok(())
     }
 
+    /// Remove all streams from the map
     pub async fn remove_all_streams(&self) {
-        let mut streams = self.streams.write().await;
-        for stream in streams.values() {
-            let mut stream = stream.lock().await;
-            let _ = stream.close().await;
-        }
-        streams.clear();
+        let mut send_streams = self.send_streams.write().await;
+        send_streams.clear();
+
+        let mut recv_streams = self.recv_streams.write().await;
+        recv_streams.clear();
     }
 }
 
@@ -90,22 +118,76 @@ impl Session {
         }
     }
 
-    pub async fn add_stream(&self, stream_id: StreamId, stream: Arc<Mutex<NetworkStream>>) {
+    pub async fn add_stream(&self, stream_id: StreamId, stream: NetworkStream) {
         self.update_last_accessed().await;
-        self.stream_map.add_stream(stream_id, stream).await;
+        // Split the stream into send and receive streams
+        let (send_stream, recv_stream) = stream.split();
+        self.stream_map.add_send_stream(stream_id, Arc::new(Mutex::new(send_stream))).await;
+        self.stream_map.add_recv_stream(stream_id, Arc::new(Mutex::new(recv_stream))).await;
     }
 
-    pub async fn get_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<NetworkStream>>> {
+    pub async fn get_stream(&self, stream_id: &StreamId) -> Option<(Arc<Mutex<SendStream>>, Arc<Mutex<RecvStream>>)> {
         self.update_last_accessed().await;
-        self.stream_map.get_stream(stream_id).await
+        let send_stream = self.get_send_stream(stream_id).await;
+        let recv_stream = self.get_recv_stream(stream_id).await;
+        if send_stream.is_some() && recv_stream.is_some() {
+            Some((send_stream.unwrap(), recv_stream.unwrap()))
+        } else {
+            None
+        }
+    }
+
+    pub async fn get_send_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<SendStream>>> {
+        self.update_last_accessed().await;
+        self.stream_map.get_send_stream(stream_id).await
+    }
+
+    pub async fn get_recv_stream(&self, stream_id: &StreamId) -> Option<Arc<Mutex<RecvStream>>> {
+        self.update_last_accessed().await;
+        self.stream_map.get_recv_stream(stream_id).await
     }
 
     /// Returns the first available stream.
     /// Which is not closed and not in use (not locked).
-    pub async fn get_available_stream(&self) -> Option<Arc<Mutex<NetworkStream>>> {
+    pub async fn get_available_stream(&self) -> Option<(Arc<Mutex<SendStream>>, Arc<Mutex<RecvStream>>)> {
         self.update_last_accessed().await;
-        let streams = self.stream_map.streams.read().await;
-        streams.values().find(|stream| {
+        let send_streams = self.stream_map.send_streams.read().await;
+        let recv_streams = self.stream_map.recv_streams.read().await;
+        for (stream_id, send_stream) in send_streams.iter() {
+            if let Ok(send_stream_lock) = send_stream.try_lock() {
+                if !send_stream_lock.is_closed() {
+                    if let Some(recv_stream) = recv_streams.get(stream_id) {
+                        if let Ok(recv_stream_lock) = recv_stream.try_lock() {
+                            if !recv_stream_lock.is_closed() {
+                                return Some((send_stream.clone(), recv_stream.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Returns the first available send stream.
+    pub async fn get_available_send_stream(&self) -> Option<Arc<Mutex<SendStream>>> {
+        self.update_last_accessed().await;
+        let send_streams = self.stream_map.send_streams.read().await;
+        send_streams.values().find(|stream| {
+            match stream.try_lock() {
+                Ok(stream_lock) => {
+                    !stream_lock.is_closed()
+                },
+                Err(_) => false,
+            }
+        }).cloned()
+    }
+
+    /// Returns the first available receive stream.
+    pub async fn get_available_recv_stream(&self) -> Option<Arc<Mutex<RecvStream>>> {
+        self.update_last_accessed().await;
+        let recv_streams = self.stream_map.recv_streams.read().await;
+        recv_streams.values().find(|stream| {
             match stream.try_lock() {
                 Ok(stream_lock) => {
                     !stream_lock.is_closed()
@@ -134,13 +216,13 @@ impl Session {
     /// Cleans up unnecessary streams, keeping at least one open stream.
     pub async fn cleanup_streams(&self) {
         // Check available stream
-        let available_stream_id: StreamId = if let Some(stream) = self.get_available_stream().await {
+        let available_stream_id: StreamId = if let Some(stream) = self.get_available_send_stream().await {
             stream.lock().await.stream_id()
         }else{
             return;
         };
         // Remove all streams except the 1 available stream.
-        let streams = self.stream_map.streams.read().await;
+        let streams = self.stream_map.send_streams.read().await;
         let mut stream_ids: Vec<StreamId> = Vec::new();
         for stream_id in streams.keys() {
             if *stream_id != available_stream_id {
@@ -193,6 +275,9 @@ pub trait FoctetStream {
 
     /// Splits the stream into send and receive streams.
     fn split(self) -> (SendStream, RecvStream);
+
+    /// Merges a `SendStream` and a `RecvStream` back into a `NetworkStream`.
+    fn merge(send_stream: SendStream, recv_stream: RecvStream) -> Result<Self> where Self: Sized;
 
 }
 
@@ -507,6 +592,24 @@ impl FoctetStream for NetworkStream {
                 let (send, recv) = stream.split();
                 (send, recv)
             }
+        }
+    }
+
+    /// Merges a `SendStream` and a `RecvStream` back into a `NetworkStream`.
+    fn merge(send_stream: SendStream, recv_stream: RecvStream) -> Result<Self> {
+        match (send_stream, recv_stream) {
+            // QUICのストリームをマージ
+            (SendStream::Quic(send), RecvStream::Quic(recv)) => {
+                Ok(NetworkStream::Quic(QuicStream::merge(SendStream::Quic(send), RecvStream::Quic(recv))?))
+            }
+
+            // TCPのストリームをマージ
+            (SendStream::Tcp(send), RecvStream::Tcp(recv)) => {
+                Ok(NetworkStream::Tcp(TlsTcpStream::merge(SendStream::Tcp(send), RecvStream::Tcp(recv))?))
+            }
+
+            // 不一致があればエラー
+            _ => Err(anyhow::anyhow!("SendStream and RecvStream types do not match")),
         }
     }
 }

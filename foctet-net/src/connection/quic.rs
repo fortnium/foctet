@@ -500,6 +500,28 @@ impl FoctetStream for QuicStream {
         let recv_stream = super::RecvStream::Quic(quic_recv_stream);
         (send_stream, recv_stream)
     }
+
+    fn merge(send_stream: super::SendStream, recv_stream: super::RecvStream) -> Result<Self> where Self: Sized {
+        match (send_stream, recv_stream) {
+            (super::SendStream::Quic(quic_send_stream), super::RecvStream::Quic(quic_recv_stream)) => {
+                Ok(Self {
+                    send_stream: quic_send_stream.send_stream,
+                    recv_stream: quic_recv_stream.recv_stream,
+                    node_id: quic_send_stream.node_id,
+                    stream_id: quic_send_stream.stream_id,
+                    connection_id: quic_send_stream.connection_id,
+                    send_buffer_size: quic_send_stream.send_buffer_size,
+                    receive_buffer_size: quic_recv_stream.receive_buffer_size,
+                    is_closed: quic_send_stream.is_closed,
+                    next_operation_id: quic_send_stream.next_operation_id,
+                    remote_address: quic_send_stream.remote_address,
+                })
+            }
+            _ => {
+                Err(anyhow!("Mismatched stream types"))
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
