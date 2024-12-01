@@ -8,6 +8,114 @@ use crate::{connection::{quic::{QuicConnection, QuicSocket}, tcp::{TcpSocket, Tl
 
 use super::Socket;
 
+/// Process incoming QUIC stream
+async fn process_quic_stream(
+    mut quic_connection: crate::connection::quic::QuicConnection,
+    node_id: NodeId,
+    sessions: Arc<RwLock<HashMap<NodeId, Session>>>,
+) -> Result<()> {
+    loop {
+        match quic_connection.accept_stream().await {
+            Ok(stream) => {
+                let stream_id = stream.stream_id();
+                if let Some(session) = sessions.write().await.get_mut(&node_id) {
+                    session.add_stream(stream_id, NetworkStream::Quic(stream)).await;
+                    tracing::info!("Accepted QUIC stream: {:?} for node {:?}", stream_id, node_id);
+                } else {
+                    tracing::warn!("Session for node {:?} not found while accepting stream", node_id);
+                }
+            }
+            Err(e) => {
+                tracing::error!("Error accepting QUIC stream for node {:?}: {:?}", node_id, e);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_quic_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, quic_socket: QuicSocket, cancel_token: CancellationToken) {
+    let (quic_conn_tx, mut quic_conn_rx) = mpsc::channel::<QuicConnection>(100);
+    let mut quic_server_socket = quic_socket;
+    let cloned_cancel_token = cancel_token.clone();
+    tokio::spawn(async move {
+        if let Err(e) = quic_server_socket.listen(quic_conn_tx, cloned_cancel_token).await {
+            tracing::error!("QUIC listener error: {:?}", e);
+        }
+    });
+
+    loop {
+        tokio::select! {
+            // Accept new connection
+            Some(quic_connection) = quic_conn_rx.recv() => {
+                let node_id = quic_connection.node_id.clone();
+                let node_addr = NodeAddr::new(node_id.clone());
+                let session = Session::new(
+                    ConnectionId::new(),
+                    node_addr,
+                );
+
+                // Register session
+                sessions.write().await.insert(node_id.clone(), session);
+
+                // Accept QUIC stream
+                let sessions_clone = sessions.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = process_quic_stream(quic_connection, node_id, sessions_clone).await {
+                        tracing::error!("Failed to process QUIC stream: {:?}", e);
+                    }
+                });
+            }
+            // Check for cancellation
+            _ = cancel_token.cancelled() => {
+                tracing::info!("QUIC listener cancelled");
+                break;
+            }
+        }
+    }
+}
+
+async fn run_tcp_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, tcp_socket: TcpSocket, cancel_token: CancellationToken) {
+    let (tcp_conn_tx, mut tcp_conn_rx) = mpsc::channel::<TlsTcpStream>(100);
+    let mut tcp_server_socket = tcp_socket;
+    let cloned_cancel_token = cancel_token.clone();
+    tokio::spawn(async move {
+        if let Err(e) = tcp_server_socket.listen(tcp_conn_tx, cloned_cancel_token).await {
+            tracing::error!("TCP listener error: {:?}", e);
+        }
+    });
+
+    loop {
+        tokio::select! {
+            // Accept new connection
+            Some(tcp_connection) = tcp_conn_rx.recv() => {
+                // Check if session exists
+                // if not, create a new session
+                // if exists, add stream to session
+                match sessions.read().await.get(&tcp_connection.node_id) {
+                    Some(session) => {
+                        let stream_id = tcp_connection.stream_id();
+                        session.add_stream(stream_id, NetworkStream::Tcp(tcp_connection)).await;
+                    }
+                    None => {
+                        let node_id = tcp_connection.node_id.clone();
+                        let node_addr = NodeAddr::new(node_id.clone());
+                        let session = Session::new(ConnectionId::new(), node_addr);
+                        let stream_id = tcp_connection.stream_id();
+                        session.add_stream(stream_id, NetworkStream::Tcp(tcp_connection)).await;
+                        sessions.write().await.insert(node_id, session);
+                    }
+                }
+            }
+            // Check for cancellation
+            _ = cancel_token.cancelled() => {
+                tracing::info!("TCP listener cancelled");
+                break;
+            }
+        }
+    }
+}
+
 pub struct SocketActor {
     /// The socket reference
     pub socket: Arc<RwLock<Socket>>,
@@ -20,9 +128,9 @@ pub struct SocketActor {
     /// Cancellation token for actor
     pub cancel_token: CancellationToken,
     /// QUIC socket
-    pub quic_socket: QuicSocket,
+    quic_socket: QuicSocket,
     /// TCP socket
-    pub tcp_socket: TcpSocket,
+    tcp_socket: TcpSocket,
 }
 
 impl SocketActor {
@@ -46,141 +154,33 @@ impl SocketActor {
         self.cancel_token.clone()
     }
 
-    pub async fn run(mut self, mut receiver: mpsc::Receiver<ActorMessage>) {
+    pub async fn run(mut self, receiver: mpsc::Receiver<ActorMessage>) -> Result<()> {
         // Run QUIC listener
-        let quic_sessions = self.sessions.clone();
         let quic_socket = self.quic_socket.clone();
+        let quic_sessions = self.sessions.clone();
         let quic_cancel_token = self.cancel_token.clone();
         tokio::spawn(async move {
-            Self::run_quic_listener(quic_sessions, quic_socket, quic_cancel_token).await;
+            run_quic_listener(quic_sessions, quic_socket, quic_cancel_token).await;
         });
         // Run TCP listener
-        let tcp_sessions = self.sessions.clone();
         let tcp_socket = self.tcp_socket.clone();
+        let tcp_sessions = self.sessions.clone();
         let tcp_cancel_token = self.cancel_token.clone();
         tokio::spawn(async move {
-            Self::run_tcp_listener(tcp_sessions, tcp_socket, tcp_cancel_token).await;
+            run_tcp_listener(tcp_sessions, tcp_socket, tcp_cancel_token).await;
         });
+        // Run actor message handler
+        self.run_message_handler(receiver).await?;
+        let _ = self.msg_sender.send(ActorMessage::Ack(AckMessage::ShutdownComplete)).await;
+        Ok(())
+    }
 
-        // Run actor message loop
+    pub async fn run_message_handler(&mut self, mut receiver: mpsc::Receiver<ActorMessage>) -> Result<()> {
         loop {
             tokio::select! {
-                // Receive messages from the ActorMessage channel
                 Some(message) = receiver.recv() => {
-                    match message {
-                        ActorMessage::SessionManagement(session_command) => {
-                            match session_command {
-                                SessionCommand::Connect(node_addr) => {
-                                    tracing::info!("Connecting to node: {:?}", node_addr);
-                                    match self.connect(node_addr.clone()).await {
-                                        Ok(socket_addr) => {
-                                            let conn_info = ConnectionInfo {
-                                                node_id: node_addr.node_id.clone(),
-                                                socket_addr: socket_addr,
-                                                connection_type: ConnectionType::Direct,
-                                            };
-                                            let msg = ActorMessage::Ack(AckMessage::Connected(conn_info));
-                                            let _ = self.msg_sender.send(msg).await;
-                                        },
-                                        Err(e) => {
-                                            let err_msg = ActorMessage::Ack(AckMessage::Failure(e));
-                                            let _ = self.msg_sender.send(err_msg).await;
-                                        }
-                                    }
-                                }
-                                SessionCommand::Disconnect(node_id) => {
-                                    tracing::info!("Disconnecting from node: {:?}", node_id);
-                                    self.disconnect(node_id.clone()).await;
-                                    let _ = self.msg_sender.send(ActorMessage::Ack(AckMessage::Disconnected(node_id))).await;
-                                }
-                                _ => {
-                                    tracing::warn!("Unsupported session command");
-                                }
-                            }
-                        }
-                        ActorMessage::DataTransfer { operation_id, target_node, payload } => {
-                            match payload {
-                                TransferPayload::Frame(frame) => {
-                                    tracing::info!("Send frame to {:?}", target_node);
-                                    match self.send_frame(target_node.clone(), frame).await {
-                                        Ok(_) => {
-                                            tracing::info!("Frame sent successfully");
-                                            let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node });
-                                            let _ = self.msg_sender.send(msg).await;
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Error sending frame: {:?}", e);
-                                            let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, error: e });
-                                            let _ = self.msg_sender.send(err_msg).await;
-                                        }
-                                    }
-                                }
-                                TransferPayload::File(file_path) => {
-                                    tracing::info!("Send file to {:?}", target_node);
-                                    match self.send_file(target_node.clone(), file_path).await {
-                                        Ok(_) => {
-                                            tracing::info!("File sent successfully");
-                                            let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node });
-                                            let _ = self.msg_sender.send(msg).await;
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Error sending file: {:?}", e);
-                                            let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, error: e });
-                                            let _ = self.msg_sender.send(err_msg).await;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        ActorMessage::DataReceive {source_node, receive_type} => {
-                            match receive_type {
-                                ReceiveType::Frame => {
-                                    tracing::info!("Receive frame from {:?}", source_node);
-                                    match self.receive_frame(source_node.clone()).await {
-                                        Ok(frame) => {
-                                            tracing::info!("Frame received successfully");
-                                            let msg = ActorMessage::Ack(AckMessage::FrameReceived { node_id: source_node, frame });
-                                            let _ = self.msg_sender.send(msg).await;
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Error receiving frame: {:?}", e);
-                                            let err_msg = ActorMessage::Ack(AckMessage::ReceiveError { node_id: source_node, error: e });
-                                            let _ = self.msg_sender.send(err_msg).await;
-                                        }
-                                    }
-                                }
-                                ReceiveType::File(path) => {
-                                    tracing::info!("Receive file from {:?}", source_node);
-                                    match self.receive_file(source_node.clone(), &path).await {
-                                        Ok(byte_size) => {
-                                            tracing::info!("File received successfully");
-                                            let msg = ActorMessage::Ack(AckMessage::FileReceived { node_id: source_node, path, byte_size });
-                                            let _ = self.msg_sender.send(msg).await;
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Error receiving file: {:?}", e);
-                                            let err_msg = ActorMessage::Ack(AckMessage::ReceiveError { node_id: source_node, error: e });
-                                            let _ = self.msg_sender.send(err_msg).await;
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        ActorMessage::Control(control_command) => {
-                            match control_command {
-                                ControlCommand::Shutdown => {
-                                    tracing::info!("Shutting down actor");
-                                    self.shutdown().await;
-                                    break;
-                                }
-                            }
-                        }
-                        _ => {
-                            tracing::warn!("Unsupported message");
-                        }
-                    }
+                    self.handle_actor_message(message).await?;
                 }
-                // Receive cancellation signal
                 _ = self.cancel_token.cancelled() => {
                     tracing::info!("Actor cancelled");
                     break;
@@ -188,6 +188,142 @@ impl SocketActor {
             }
         }
         let _ = self.msg_sender.send(ActorMessage::Ack(AckMessage::ShutdownComplete)).await;
+        Ok(())
+    }
+
+    async fn handle_actor_message(&mut self, message: ActorMessage) -> Result<()> {
+        match message {
+            ActorMessage::SessionManagement(session_command) => {
+                self.handle_session_management(session_command).await
+            }
+            ActorMessage::DataTransfer { operation_id, target_node, payload } => {
+                self.handle_data_transfer(operation_id, target_node, payload).await
+            }
+            ActorMessage::DataReceive { source_node, receive_type } => {
+                self.handle_data_receive(source_node, receive_type).await
+            }
+            ActorMessage::Control(control_command) => {
+                self.handle_control_command(control_command).await
+            }
+            _ => {
+                tracing::warn!("Unsupported message");
+                Ok(())
+            }
+        }
+    }
+
+    async fn handle_session_management(&mut self, session_command: SessionCommand) -> Result<()> {
+        match session_command {
+            SessionCommand::Connect(node_addr) => {
+                tracing::info!("Connecting to node: {:?}", node_addr);
+                match self.connect(node_addr.clone()).await {
+                    Ok(socket_addr) => {
+                        let conn_info = ConnectionInfo {
+                            node_id: node_addr.node_id.clone(),
+                            socket_addr: socket_addr,
+                            connection_type: ConnectionType::Direct,
+                        };
+                        let msg = ActorMessage::Ack(AckMessage::Connected(conn_info));
+                        self.msg_sender.send(msg).await?;
+                    },
+                    Err(e) => {
+                        let err_msg = ActorMessage::Ack(AckMessage::Failure(e));
+                        self.msg_sender.send(err_msg).await?;
+                    }
+                }
+            }
+            SessionCommand::Disconnect(node_id) => {
+                tracing::info!("Disconnecting from node: {:?}", node_id);
+                self.disconnect(node_id.clone()).await;
+                self.msg_sender.send(ActorMessage::Ack(AckMessage::Disconnected(node_id))).await?;
+            }
+            _ => {
+                tracing::warn!("Unsupported session command");
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_data_transfer(&mut self, operation_id: OperationId, target_node: NodeId, payload: TransferPayload) -> Result<()> {
+        match payload {
+            TransferPayload::Frame(frame) => {
+                tracing::info!("Send frame to {:?}", target_node);
+                match self.send_frame(target_node.clone(), frame).await {
+                    Ok(_) => {
+                        tracing::info!("Frame sent successfully");
+                        let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node });
+                        self.msg_sender.send(msg).await?;
+                    }
+                    Err(e) => {
+                        tracing::error!("Error sending frame: {:?}", e);
+                        let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, error: e });
+                        self.msg_sender.send(err_msg).await?;
+                    }
+                }
+            }
+            TransferPayload::File(file_path) => {
+                tracing::info!("Send file to {:?}", target_node);
+                match self.send_file(target_node.clone(), file_path).await {
+                    Ok(_) => {
+                        tracing::info!("File sent successfully");
+                        let msg = ActorMessage::Ack(AckMessage::TransferComplete { operation_id, node_id: target_node });
+                        self.msg_sender.send(msg).await?;
+                    }
+                    Err(e) => {
+                        tracing::error!("Error sending file: {:?}", e);
+                        let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, error: e });
+                        self.msg_sender.send(err_msg).await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_data_receive(&mut self, source_node: NodeId, receive_type: ReceiveType) -> Result<()> {
+        match receive_type {
+            ReceiveType::Frame => {
+                tracing::info!("Receive frame from {:?}", source_node);
+                match self.receive_frame(source_node.clone()).await {
+                    Ok(frame) => {
+                        tracing::info!("Frame received successfully");
+                        let msg = ActorMessage::Ack(AckMessage::FrameReceived { node_id: source_node, frame });
+                        self.msg_sender.send(msg).await?;
+                    }
+                    Err(e) => {
+                        tracing::error!("Error receiving frame: {:?}", e);
+                        let err_msg = ActorMessage::Ack(AckMessage::ReceiveError { node_id: source_node, error: e });
+                        self.msg_sender.send(err_msg).await?;
+                    }
+                }
+            }
+            ReceiveType::File(path) => {
+                tracing::info!("Receive file from {:?}", source_node);
+                match self.receive_file(source_node.clone(), &path).await {
+                    Ok(byte_size) => {
+                        tracing::info!("File received successfully");
+                        let msg = ActorMessage::Ack(AckMessage::FileReceived { node_id: source_node, path, byte_size });
+                        self.msg_sender.send(msg).await?;
+                    }
+                    Err(e) => {
+                        tracing::error!("Error receiving file: {:?}", e);
+                        let err_msg = ActorMessage::Ack(AckMessage::ReceiveError { node_id: source_node, error: e });
+                        self.msg_sender.send(err_msg).await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_control_command(&mut self, control_command: ControlCommand) -> Result<()> {
+        match control_command {
+            ControlCommand::Shutdown => {
+                tracing::info!("Shutting down actor");
+                self.shutdown().await;
+                Ok(())
+            }
+        }
     }
 
     async fn connect(&mut self, node_addr: NodeAddr) -> Result<SocketAddr> {
@@ -235,53 +371,6 @@ impl SocketActor {
         let mut sessions = self.sessions.write().await;
         if let Some(mut session) = sessions.remove(&node_id) {
             session.close().await;
-        }
-    }
-
-    async fn run_quic_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, quic_socket: QuicSocket, cancel_token: CancellationToken) {
-        let (quic_conn_tx, mut quic_conn_rx) = mpsc::channel::<QuicConnection>(100);
-        let mut quic_server_socket = quic_socket;
-        let cloned_cancel_token = cancel_token.clone();
-        tokio::spawn(async move {
-            if let Err(e) = quic_server_socket.listen(quic_conn_tx, cloned_cancel_token).await {
-                tracing::error!("QUIC listener error: {:?}", e);
-            }
-        });
-    
-        while let Some(mut quic_connection) = quic_conn_rx.recv().await {
-            if cancel_token.is_cancelled() {
-                break;
-            }
-            let node_id = quic_connection.node_id.clone();
-            let stream = quic_connection.accept_stream().await.unwrap();
-            let stream_id = stream.stream_id();
-            let node_addr = NodeAddr::new(node_id.clone());
-            let session = Session::new_with_quic_connection(ConnectionId::new(), node_addr, quic_connection);
-            session.add_stream(stream_id, NetworkStream::Quic(stream)).await;
-            sessions.write().await.insert(node_id, session);
-        }
-    }
-    
-    async fn run_tcp_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, tcp_socket: TcpSocket, cancel_token: CancellationToken) {
-        let (tcp_conn_tx, mut tcp_conn_rx) = mpsc::channel::<TlsTcpStream>(100);
-        let mut tcp_server_socket = tcp_socket;
-        let cloned_cancel_token = cancel_token.clone();
-        tokio::spawn(async move {
-            if let Err(e) = tcp_server_socket.listen(tcp_conn_tx, cloned_cancel_token).await {
-                tracing::error!("TCP listener error: {:?}", e);
-            }
-        });
-    
-        while let Some(tcp_connection) = tcp_conn_rx.recv().await {
-            if cancel_token.is_cancelled() {
-                break;
-            }
-            let node_id = tcp_connection.node_id.clone();
-            let stream_id = tcp_connection.stream_id();
-            let node_addr = NodeAddr::new(node_id.clone());
-            let session = Session::new(ConnectionId::new(), node_addr);
-            session.add_stream(stream_id, NetworkStream::Tcp(tcp_connection)).await;
-            sessions.write().await.insert(node_id, session);
         }
     }
 
@@ -410,8 +499,8 @@ impl SocketActor {
     }
 
     pub async fn shutdown(&mut self) {
-        let _ = self.cancel_token.cancel();
         self.close_sessions().await;
+        let _ = self.cancel_token.cancel();
     }
     
     pub async fn close_sessions(&mut self) {
