@@ -82,7 +82,7 @@ impl RelaySocketActor {
                                             let _ = self.msg_sender.send(msg).await;
                                         },
                                         Err(e) => {
-                                            let err_msg = RelayActorMessage::Ack(AckMessage::Failure(e));
+                                            let err_msg = RelayActorMessage::Ack(AckMessage::Error(e));
                                             let _ = self.msg_sender.send(err_msg).await;
                                         }
                                     }
@@ -131,40 +131,6 @@ impl RelaySocketActor {
                                 }
                             }
                         }
-                        RelayActorMessage::DataReceive {source_node, receive_type} => {
-                            match receive_type {
-                                ReceiveType::Frame => {
-                                    tracing::info!("Receive frame from {:?}", source_node);
-                                    match self.receive_frame(source_node.clone()).await {
-                                        Ok(frame) => {
-                                            tracing::info!("Frame received successfully");
-                                            let msg = RelayActorMessage::Ack(AckMessage::FrameReceived { node_id: source_node, frame });
-                                            let _ = self.msg_sender.send(msg).await;
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Error receiving frame: {:?}", e);
-                                            let err_msg = RelayActorMessage::Ack(AckMessage::ReceiveError { node_id: source_node, error: e });
-                                            let _ = self.msg_sender.send(err_msg).await;
-                                        }
-                                    }
-                                }
-                                ReceiveType::File(path) => {
-                                    tracing::info!("Receive file from {:?}", source_node);
-                                    match self.receive_file(source_node.clone(), &path).await {
-                                        Ok(byte_size) => {
-                                            tracing::info!("File received successfully");
-                                            let msg = RelayActorMessage::Ack(AckMessage::FileReceived { node_id: source_node, path, byte_size });
-                                            let _ = self.msg_sender.send(msg).await;
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Error receiving file: {:?}", e);
-                                            let err_msg = RelayActorMessage::Ack(AckMessage::ReceiveError { node_id: source_node, error: e });
-                                            let _ = self.msg_sender.send(err_msg).await;
-                                        }
-                                    }
-                                }
-                            }
-                        },
                         RelayActorMessage::Control(control_command) => {
                             match control_command {
                                 ControlCommand::Shutdown => {

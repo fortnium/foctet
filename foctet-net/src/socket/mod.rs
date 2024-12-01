@@ -305,7 +305,7 @@ impl SocketHandle {
                     Err(e) => return Err(e),
                 }
                 match socket.receive_message().await {
-                    Ok(message) => {
+                    Some(message) => {
                         match message {
                             ActorMessage::Ack(ack_message) => {
                                 match ack_message {
@@ -319,7 +319,7 @@ impl SocketHandle {
                             _ => Err(anyhow!("Unexpected message")),
                         }
                     },
-                    Err(e) => Err(e),
+                    None => Err(anyhow!("No message received")),
                 }
             },
             ConnectionType::Relay => {
@@ -373,6 +373,8 @@ pub struct Socket {
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     /// The relay actor message receiver.
     relay_actor_receiver: mpsc::Receiver<RelayActorMessage>,
+    /// The incoming message receiver.
+    incoming_message_receiver: mpsc::Receiver<ActorMessage>,
     /// The actor cancellation token.
     actor_cancel_token: CancellationToken,
     /// The relay actor cancellation token.
@@ -382,11 +384,12 @@ pub struct Socket {
 }
 
 impl Socket {
-    pub async fn new(node_addr: NodeAddr, config: SocketConfig) -> Result<SocketHandle> {
+    pub async fn spawn(node_addr: NodeAddr, config: SocketConfig) -> Result<SocketHandle> {
         let (from_actor_sender, from_actor_receiver) = mpsc::channel::<ActorMessage>(256);
         let (from_relay_actor_sender, from_relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
         let (to_actor_sender, to_actor_receiver) = mpsc::channel::<ActorMessage>(256);
         let (to_relay_actor_sender, to_relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
+        let (incomming_message_tx, incomming_message_rx) = mpsc::channel::<ActorMessage>(256);
         
         let actor_cancel_token = CancellationToken::new();
         let cloned_actor_cancel_token = actor_cancel_token.clone();
@@ -400,6 +403,7 @@ impl Socket {
             actor_receiver: from_actor_receiver,
             relay_actor_sender: to_relay_actor_sender,
             relay_actor_receiver: from_relay_actor_receiver,
+            incoming_message_receiver: incomming_message_rx,
             actor_cancel_token,
             relay_actor_cancel_token,
             connections: HashMap::new(),
@@ -407,7 +411,7 @@ impl Socket {
         let socket_arc = Arc::new(RwLock::new(socket));
         let actor = SocketActor::new(Arc::clone(&socket_arc), from_actor_sender, cloned_actor_cancel_token).await?;
         // Spawn the actor
-        tokio::spawn(actor.run(to_actor_receiver));
+        tokio::spawn(actor.run(to_actor_receiver, incomming_message_tx));
         let relay_actor = RelaySocketActor::new(Arc::clone(&socket_arc), from_relay_actor_sender, cloned_relay_actor_cancel_token).await?;
         // Spawn the relay actor
         tokio::spawn(relay_actor.run(to_relay_actor_receiver));
@@ -420,16 +424,16 @@ impl Socket {
         self.actor_sender.send(message).await.map_err(|e| anyhow!(e))
     }
 
-    pub async fn receive_message(&mut self) -> Result<ActorMessage> {
-        self.actor_receiver.recv().await.ok_or_else(|| anyhow!("Actor receiver channel closed"))
+    pub async fn receive_message(&mut self) -> Option<ActorMessage> {
+        self.actor_receiver.recv().await
     }
 
     pub async fn send_relay_message(&self, message: RelayActorMessage) -> Result<()> {
         self.relay_actor_sender.send(message).await.map_err(|e| anyhow!(e))
     }
 
-    pub async fn receive_relay_message(&mut self) -> Result<RelayActorMessage> {
-        self.relay_actor_receiver.recv().await.ok_or_else(|| anyhow!("Relay actor receiver channel closed"))
+    pub async fn receive_relay_message(&mut self) -> Option<RelayActorMessage> {
+        self.relay_actor_receiver.recv().await
     }
 
     pub fn cancel_actor(&self) {
@@ -440,195 +444,3 @@ impl Socket {
         self.relay_actor_cancel_token.cancel();
     }
 }
-
-/* impl Socket {
-    pub fn new(node_addr: NodeAddr, config: SocketConfig) -> Result<SocketHandle> {
-        let (from_actor_sender, from_actor_receiver) = mpsc::channel::<ActorMessage>(256);
-        let (from_relay_actor_sender, from_relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
-        let (to_actor_sender, to_actor_receiver) = mpsc::channel::<ActorMessage>(256);
-        let (to_relay_actor_sender, to_relay_actor_receiver) = mpsc::channel::<RelayActorMessage>(256);
-        let socket = Self { 
-            node_addr, 
-            config,
-            actor_sender: to_actor_sender,
-            actor_receiver: from_actor_receiver,
-            relay_actor_sender: to_relay_actor_sender,
-            relay_actor_receiver: from_relay_actor_receiver,
-        };
-        let socket_arc = Arc::new(socket);
-        let actor = SocketActor::new(Arc::clone(&socket_arc), from_actor_sender)?;
-        // Spawn the actor
-        tokio::spawn(actor.run(to_actor_receiver));
-        let relay_actor = RelaySocketActor::new(Arc::clone(&socket_arc), from_relay_actor_sender)?;
-        // Spawn the relay actor
-        tokio::spawn(relay_actor.run(to_relay_actor_receiver));
-        Ok(SocketHandle {
-            inner: socket_arc,
-        })
-    }
-    /// Start listening for incoming connections
-    pub async fn listen(&mut self) -> Result<()> {
-        match self.config.socket_type {
-            SocketType::Quic => {
-                let node_id = self.node_addr.node_id.clone();
-                let quic_config = self.config.clone();
-                tokio::spawn(async move {
-                    let _ = start_quic_server(node_id.clone(), quic_config).await;
-                });
-            }
-            SocketType::Tcp => {
-                let node_id = self.node_addr.node_id.clone();
-                let tcp_config = self.config.clone();
-                tokio::spawn(async move {
-                    let _ = start_tcp_server(node_id.clone(), tcp_config).await;
-                });
-            }
-            SocketType::Both => {
-                let node_id = self.node_addr.node_id.clone();
-                let quic_config = self.config.clone();
-                tokio::spawn(async move {
-                    let _ = start_quic_server(node_id.clone(), quic_config).await;
-                });
-                let node_id = self.node_addr.node_id.clone();
-                let tcp_config = self.config.clone();
-                tokio::spawn(async move {
-                    let _ = start_tcp_server(node_id.clone(), tcp_config).await;
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// Connect to another peer
-    pub async fn connect(&self, server_addr: SocketAddr, server_name: &str) -> Result<()> {
-        match self.config.socket_type {
-            SocketType::Quic => {
-                let mut quic_socket =
-                    QuicSocket::new_client(self.node_addr.node_id.clone(), self.config.clone())?;
-                let _conn = quic_socket.connect(server_addr, server_name).await?;
-                // Do something with the connection if needed
-            }
-            SocketType::Tcp => {
-                let mut tcp_socket =
-                    TcpSocket::new(self.node_addr.node_id.clone(), self.config.clone())?;
-                let _conn = tcp_socket.connect(server_addr, server_name).await?;
-                // Do something with the connection if needed
-            }
-            SocketType::Both => {
-                let mut quic_socket =
-                    QuicSocket::new_client(self.node_addr.node_id.clone(), self.config.clone())?;
-                let _conn = quic_socket.connect(server_addr, server_name).await?;
-                // Do something with the connection if needed
-                let mut tcp_socket =
-                    TcpSocket::new(self.node_addr.node_id.clone(), self.config.clone())?;
-                let _conn = tcp_socket.connect(server_addr, server_name).await?;
-                // Do something with the connection if needed
-            }
-        }
-        Ok(())
-    }
-}
-
-async fn start_quic_server(node_id: NodeId, config: SocketConfig) -> Result<()> {
-    let mut quic_socket = QuicSocket::new(node_id, config)?;
-    let (conn_tx, mut conn_rx) = mpsc::channel::<QuicConnection>(100);
-    // Start the QUIC listener
-    tokio::spawn(async move {
-        match quic_socket.listen(conn_tx).await {
-            Ok(_) => {
-                tracing::info!("QUIC listener stopped.");
-            }
-            Err(e) => {
-                tracing::error!("Error listening: {:?}", e);
-            }
-        }
-    });
-    // Handle incoming connections
-    while let Some(mut conn) = conn_rx.recv().await {
-        tokio::spawn(async move {
-            tracing::info!("New connection: {:?}", conn.remote_address());
-            loop {
-                tracing::info!("Waiting for incoming stream...");
-                match conn.accept_stream().await {
-                    Ok(stream) => {
-                        tokio::spawn(handle_stream(stream));
-                    }
-                    Err(e) => {
-                        if let Some(stream_error) = e.downcast_ref::<ConnectionError>() {
-                            match stream_error {
-                                ConnectionError::Closed => {
-                                    tracing::info!(
-                                        "Connection closed while waiting for {}",
-                                        conn.next_stream_id
-                                    );
-                                }
-                                _ => {
-                                    tracing::error!("Error accepting stream: {:?}", e);
-                                }
-                            }
-                        } else {
-                            tracing::error!("Error accepting stream: {:?}", e);
-                        }
-                        break;
-                    }
-                }
-            }
-        });
-    }
-    Ok(())
-}
-
-async fn start_tcp_server(node_id: NodeId, config: SocketConfig) -> Result<()> {
-    let mut tcp_socket = TcpSocket::new(node_id, config)?;
-    let (conn_tx, mut conn_rx) = mpsc::channel::<TlsTcpStream>(100);
-    // Start the TCP listener
-    tokio::spawn(async move {
-        match tcp_socket.listen(conn_tx).await {
-            Ok(_) => {
-                tracing::info!("TCP listener stopped.");
-            }
-            Err(e) => {
-                tracing::error!("Error listening: {:?}", e);
-            }
-        }
-    });
-    while let Some(conn) = conn_rx.recv().await {
-        tokio::spawn(async move {
-            tracing::info!("New connection: {:?}", conn.remote_address());
-            tokio::spawn(handle_stream(conn));
-        });
-    }
-    Ok(())
-}
-
-/// Handle individual streams
-async fn handle_stream<S>(stream: S)
-where
-    S: FoctetStream + Send + 'static,
-{
-    let mut stream = stream;
-    tracing::info!("New stream: {}", stream.stream_id());
-    loop {
-        match stream.receive_frame().await {
-            Ok(frame) => {
-                tracing::info!(
-                    "{} Received frame type: {:?}",
-                    stream.stream_id(),
-                    frame.frame_type
-                );
-                tracing::info!("{} Total length: {:?}", stream.stream_id(), frame.len());
-                tracing::info!(
-                    "{} Payload length: {}",
-                    stream.stream_id(),
-                    frame.payload_len()
-                );
-                // Process frame (e.g., relay, respond, etc.)
-            }
-            Err(e) => {
-                tracing::error!("Error receiving frame: {:?}", e);
-                break;
-            }
-        }
-    }
-}
- */

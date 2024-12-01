@@ -15,10 +15,10 @@ pub enum ActorMessage {
         target_node: NodeId,
         payload: TransferPayload,
     },
-    /// Data reception related commands
-    DataReceive {
-        source_node: NodeId,
-        receive_type: ReceiveType,
+    /// The received frame from the target node
+    ReceivedFrame {
+        src_node_id: NodeId,
+        frame: Frame,
     },
     /// Control related commands
     Control(ControlCommand),
@@ -81,7 +81,7 @@ pub enum ControlCommand {
 #[derive(Debug)]
 pub enum AckMessage {
     Success,
-    Failure(anyhow::Error),
+    Error(anyhow::Error),
     Connected(ConnectionInfo),
     Disconnected(NodeId),
     TransferComplete {
@@ -93,18 +93,14 @@ pub enum AckMessage {
         node_id: NodeId,
         error: anyhow::Error,
     },
-    FrameReceived {
+    Frame {
         node_id: NodeId,
         frame: Frame,
     },
-    FileReceived {
+    File {
         node_id: NodeId,
         path: PathBuf,
         byte_size: u64,
-    },
-    ReceiveError {
-        node_id: NodeId,
-        error: anyhow::Error,
     },
     ShutdownComplete,
 }

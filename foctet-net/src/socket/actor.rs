@@ -1,26 +1,60 @@
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::{Duration, Instant}};
 
 use foctet_core::{frame::{Frame, OperationId, StreamId}, node::{ConnectionId, NodeAddr, NodeId}};
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;
 use crate::{connection::{quic::{QuicConnection, QuicSocket}, tcp::{TcpSocket, TlsTcpStream}, FoctetRecvStream, FoctetSendStream, FoctetStream, NetworkStream, RecvStream, SendStream, Session}, message::{AckMessage, ActorMessage, ControlCommand, ReceiveType, SessionCommand, TransferPayload}, socket::{ConnectionInfo, ConnectionType}};
 
 use super::Socket;
 
+async fn handle_recv_stream(node_id: NodeId, recv_stream: Arc<Mutex<RecvStream>>, incoming_message_tx: mpsc::Sender<ActorMessage>) {
+    let mut recv_stream = recv_stream.lock().await;
+    loop {
+        match recv_stream.receive_frame().await {
+            Ok(frame) => {
+                tracing::info!("Received frame: {:?}", frame);
+                let message = ActorMessage::ReceivedFrame { src_node_id: node_id.clone(), frame: frame };
+                match incoming_message_tx.send(message).await {
+                    Ok(_) => {
+                        tracing::info!("Frame sent to actor");
+                    }
+                    Err(e) => {
+                        tracing::error!("Error sending frame to actor: {:?}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Error receiving frame: {:?}", e);
+                break;
+            }
+        }
+    }
+}
+
 /// Process incoming QUIC stream
-async fn process_quic_stream(
+async fn run_quic_acceptor(
     mut quic_connection: crate::connection::quic::QuicConnection,
     node_id: NodeId,
     sessions: Arc<RwLock<HashMap<NodeId, Session>>>,
+    incoming_message_tx: mpsc::Sender<ActorMessage>
 ) -> Result<()> {
     loop {
+        let node_id = node_id.clone();
         match quic_connection.accept_stream().await {
             Ok(stream) => {
                 let stream_id = stream.stream_id();
                 if let Some(session) = sessions.write().await.get_mut(&node_id) {
                     session.add_stream(stream_id, NetworkStream::Quic(stream)).await;
                     tracing::info!("Accepted QUIC stream: {:?} for node {:?}", stream_id, node_id);
+                    match session.get_recv_stream(&stream_id).await {
+                        Some(recv_stream) => {
+                            tokio::spawn(handle_recv_stream(node_id, recv_stream, incoming_message_tx.clone()));
+                        }
+                        None => {
+                            tracing::error!("Failed to get receive stream for stream: {:?}", stream_id);
+                        }
+                    }
                 } else {
                     tracing::warn!("Session for node {:?} not found while accepting stream", node_id);
                 }
@@ -34,7 +68,7 @@ async fn process_quic_stream(
     Ok(())
 }
 
-async fn run_quic_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, quic_socket: QuicSocket, cancel_token: CancellationToken) {
+async fn run_quic_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, quic_socket: QuicSocket, cancel_token: CancellationToken, incoming_message_tx: mpsc::Sender<ActorMessage>) {
     let (quic_conn_tx, mut quic_conn_rx) = mpsc::channel::<QuicConnection>(100);
     let mut quic_server_socket = quic_socket;
     let cloned_cancel_token = cancel_token.clone();
@@ -60,8 +94,9 @@ async fn run_quic_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, quic
 
                 // Accept QUIC stream
                 let sessions_clone = sessions.clone();
+                let incoming_message_tx_clone = incoming_message_tx.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = process_quic_stream(quic_connection, node_id, sessions_clone).await {
+                    if let Err(e) = run_quic_acceptor(quic_connection, node_id, sessions_clone, incoming_message_tx_clone).await {
                         tracing::error!("Failed to process QUIC stream: {:?}", e);
                     }
                 });
@@ -75,7 +110,7 @@ async fn run_quic_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, quic
     }
 }
 
-async fn run_tcp_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, tcp_socket: TcpSocket, cancel_token: CancellationToken) {
+async fn run_tcp_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, tcp_socket: TcpSocket, cancel_token: CancellationToken, incoming_message_tx: mpsc::Sender<ActorMessage>) {
     let (tcp_conn_tx, mut tcp_conn_rx) = mpsc::channel::<TlsTcpStream>(100);
     let mut tcp_server_socket = tcp_socket;
     let cloned_cancel_token = cancel_token.clone();
@@ -88,22 +123,36 @@ async fn run_tcp_listener(sessions: Arc<RwLock<HashMap<NodeId, Session>>>, tcp_s
     loop {
         tokio::select! {
             // Accept new connection
-            Some(tcp_connection) = tcp_conn_rx.recv() => {
+            Some(tls_tcp_stream) = tcp_conn_rx.recv() => {
+                let stream_id = tls_tcp_stream.stream_id();
+                let node_id = tls_tcp_stream.node_id.clone();
                 // Check if session exists
                 // if not, create a new session
                 // if exists, add stream to session
-                match sessions.read().await.get(&tcp_connection.node_id) {
+                match sessions.read().await.get(&node_id) {
                     Some(session) => {
-                        let stream_id = tcp_connection.stream_id();
-                        session.add_stream(stream_id, NetworkStream::Tcp(tcp_connection)).await;
+                        session.add_stream(stream_id, NetworkStream::Tcp(tls_tcp_stream)).await;
                     }
                     None => {
-                        let node_id = tcp_connection.node_id.clone();
                         let node_addr = NodeAddr::new(node_id.clone());
                         let session = Session::new(ConnectionId::new(), node_addr);
-                        let stream_id = tcp_connection.stream_id();
-                        session.add_stream(stream_id, NetworkStream::Tcp(tcp_connection)).await;
-                        sessions.write().await.insert(node_id, session);
+                        session.add_stream(stream_id, NetworkStream::Tcp(tls_tcp_stream)).await;
+                        sessions.write().await.insert(node_id.clone(), session);
+                    }
+                }
+                match sessions.read().await.get(&node_id) {
+                    Some(session) => {
+                        match session.get_recv_stream(&stream_id).await {
+                            Some(recv_stream) => {
+                                tokio::spawn(handle_recv_stream(node_id, recv_stream, incoming_message_tx.clone()));
+                            }
+                            None => {
+                                tracing::error!("Failed to get receive stream for stream: {:?}", stream_id);
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::warn!("Session for node {:?} not found while accepting stream", node_id);
                     }
                 }
             }
@@ -121,6 +170,8 @@ pub struct SocketActor {
     pub socket: Arc<RwLock<Socket>>,
     /// Sender for actor messages
     pub msg_sender: mpsc::Sender<ActorMessage>,
+    /// Response senders for operations
+    pub response_senders: Arc<Mutex<HashMap<OperationId, oneshot::Sender<AckMessage>>>>,
     /// Remote nodes
     pub remote_nodes: Arc<RwLock<HashMap<NodeId, NodeAddr>>>,
     /// Sessions for connections. Key: Remote NodeId, Value: Session between Local and Remote Node
@@ -142,6 +193,7 @@ impl SocketActor {
         Ok(Self {
             socket,
             msg_sender,
+            response_senders: Arc::new(Mutex::new(HashMap::new())),
             remote_nodes: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             cancel_token: cancel_token,
@@ -154,23 +206,25 @@ impl SocketActor {
         self.cancel_token.clone()
     }
 
-    pub async fn run(mut self, receiver: mpsc::Receiver<ActorMessage>) -> Result<()> {
+    pub async fn run(mut self, outgoing_message_rx: mpsc::Receiver<ActorMessage>, incoming_message_tx: mpsc::Sender<ActorMessage>) -> Result<()> {
         // Run QUIC listener
         let quic_socket = self.quic_socket.clone();
         let quic_sessions = self.sessions.clone();
         let quic_cancel_token = self.cancel_token.clone();
+        let incoming_message_tx_clone = incoming_message_tx.clone();
         tokio::spawn(async move {
-            run_quic_listener(quic_sessions, quic_socket, quic_cancel_token).await;
+            run_quic_listener(quic_sessions, quic_socket, quic_cancel_token, incoming_message_tx_clone).await;
         });
         // Run TCP listener
         let tcp_socket = self.tcp_socket.clone();
         let tcp_sessions = self.sessions.clone();
         let tcp_cancel_token = self.cancel_token.clone();
+        let incoming_message_tx_clone = incoming_message_tx.clone();
         tokio::spawn(async move {
-            run_tcp_listener(tcp_sessions, tcp_socket, tcp_cancel_token).await;
+            run_tcp_listener(tcp_sessions, tcp_socket, tcp_cancel_token, incoming_message_tx_clone).await;
         });
         // Run actor message handler
-        self.run_message_handler(receiver).await?;
+        self.run_message_handler(outgoing_message_rx).await?;
         let _ = self.msg_sender.send(ActorMessage::Ack(AckMessage::ShutdownComplete)).await;
         Ok(())
     }
@@ -199,9 +253,6 @@ impl SocketActor {
             ActorMessage::DataTransfer { operation_id, target_node, payload } => {
                 self.handle_data_transfer(operation_id, target_node, payload).await
             }
-            ActorMessage::DataReceive { source_node, receive_type } => {
-                self.handle_data_receive(source_node, receive_type).await
-            }
             ActorMessage::Control(control_command) => {
                 self.handle_control_command(control_command).await
             }
@@ -227,7 +278,7 @@ impl SocketActor {
                         self.msg_sender.send(msg).await?;
                     },
                     Err(e) => {
-                        let err_msg = ActorMessage::Ack(AckMessage::Failure(e));
+                        let err_msg = ActorMessage::Ack(AckMessage::Error(e));
                         self.msg_sender.send(err_msg).await?;
                     }
                 }
@@ -272,42 +323,6 @@ impl SocketActor {
                     Err(e) => {
                         tracing::error!("Error sending file: {:?}", e);
                         let err_msg = ActorMessage::Ack(AckMessage::TransferError { operation_id, node_id: target_node, error: e });
-                        self.msg_sender.send(err_msg).await?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn handle_data_receive(&mut self, source_node: NodeId, receive_type: ReceiveType) -> Result<()> {
-        match receive_type {
-            ReceiveType::Frame => {
-                tracing::info!("Receive frame from {:?}", source_node);
-                match self.receive_frame(source_node.clone()).await {
-                    Ok(frame) => {
-                        tracing::info!("Frame received successfully");
-                        let msg = ActorMessage::Ack(AckMessage::FrameReceived { node_id: source_node, frame });
-                        self.msg_sender.send(msg).await?;
-                    }
-                    Err(e) => {
-                        tracing::error!("Error receiving frame: {:?}", e);
-                        let err_msg = ActorMessage::Ack(AckMessage::ReceiveError { node_id: source_node, error: e });
-                        self.msg_sender.send(err_msg).await?;
-                    }
-                }
-            }
-            ReceiveType::File(path) => {
-                tracing::info!("Receive file from {:?}", source_node);
-                match self.receive_file(source_node.clone(), &path).await {
-                    Ok(byte_size) => {
-                        tracing::info!("File received successfully");
-                        let msg = ActorMessage::Ack(AckMessage::FileReceived { node_id: source_node, path, byte_size });
-                        self.msg_sender.send(msg).await?;
-                    }
-                    Err(e) => {
-                        tracing::error!("Error receiving file: {:?}", e);
-                        let err_msg = ActorMessage::Ack(AckMessage::ReceiveError { node_id: source_node, error: e });
                         self.msg_sender.send(err_msg).await?;
                     }
                 }
