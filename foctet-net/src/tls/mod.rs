@@ -5,10 +5,17 @@ pub mod key;
 
 use anyhow::Result;
 use cert::SkipServerVerification;
-use rustls::client::ClientConfig;
+use rustls::client::{ClientConfig, WebPkiServerVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::server::ServerConfig;
 use std::path::Path;
+use std::sync::Arc;
+
+/// Alias of [`rustls::server::ServerConfig`].
+pub type TlsServerConfig = rustls::server::ServerConfig;
+
+/// Alias of [`rustls::client::ClientConfig`].
+pub type TlsClientConfig = rustls::client::ClientConfig;
 
 /// Generate a self-signed certificate and private key
 /// Returns a tuple of certificate chain and private key in DER format
@@ -119,6 +126,62 @@ impl TlsConfig {
             server_config: rustls_server_config,
         })
     }
+}
+
+pub struct TlsServerConfigBuilder  {
+    inner: TlsServerConfig,
+} 
+
+impl TlsServerConfigBuilder {
+    pub fn new_insecure(subject_alt_names: Vec<String>) -> Result<TlsServerConfig> {
+        let (certs, key) = generate_self_signed_pair_der(subject_alt_names)?;
+        let rustls_server_config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)?;
+        Ok(rustls_server_config)
+    }
+    pub fn new_with_cert(cert_path: &Path, key_path: &Path) -> Result<TlsServerConfig> {
+        let (certs, key) = load_cert(cert_path, key_path)?;
+        let rustls_server_config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)?;
+        Ok(rustls_server_config)
+    }
+    pub fn new_with_self_signed_certs(subject_alt_names: Vec<String>) -> Result<TlsServerConfig> {
+        let (certs, key) = generate_self_signed_pair_der(subject_alt_names)?;
+        let rustls_server_config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)?;
+        Ok(rustls_server_config)
+    }
+}
+
+pub struct TlsClientConfigBuilder  {
+    inner: TlsClientConfig,
+} 
+
+impl TlsClientConfigBuilder {
+    pub fn new_insecure() -> Result<TlsClientConfig> {
+        let client_config = ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(SkipServerVerification::new())
+            .with_no_client_auth();
+        Ok(client_config)
+    }
+    pub fn new_with_native_certs() -> Result<TlsClientConfig> {
+        let native_certs = cert::get_native_certs()?;
+        let client_config = ClientConfig::builder()
+            .with_root_certificates(native_certs)
+            .with_no_client_auth();
+        Ok(client_config)
+    }
+    pub fn new_with_webpki_verifier(verifier: Arc<WebPkiServerVerifier>) -> Result<TlsClientConfig> {
+        let client_config = ClientConfig::builder()
+            .with_webpki_verifier(verifier)
+            .with_no_client_auth();
+        Ok(client_config)
+    }
+
 }
 
 #[cfg(test)]
