@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use foctet_core::{frame::{Frame, OperationId}, node::{NodeAddr, NodeId}};
 
-use crate::socket::ConnectionInfo;
+use crate::connection::ConnectionInfo;
 
 /// Actor messages
 #[derive(Debug)]

@@ -9,7 +9,7 @@ use foctet_net::connection::{
     tcp::{TcpSocket, TlsTcpStream},
     FoctetStream,
 };
-use foctet_net::{socket::SocketConfig, tls::TlsConfig};
+use foctet_net::config::EndpointConfig;
 use tokio_util::sync::CancellationToken;
 use std::path::PathBuf;
 use std::{
@@ -81,15 +81,15 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
 
-    let tls_config = if args.cert_path.is_some() & args.cert_path.is_some() {
-        TlsConfig::with_cert(&args.cert_path.unwrap(), &args.key_path.unwrap())?
-    } else {
-        TlsConfig::new_insecure_config()?
-    };
-    let socket_config = SocketConfig::new(tls_config)
-        .with_server_addr(args.server_addr)
+    let mut socket_config = EndpointConfig::new()
         .with_max_read_buffer_size()
-        .with_max_write_buffer_size();
+        .with_max_write_buffer_size()
+        .with_insecure(false);
+
+    if args.cert_path.is_some() & args.cert_path.is_some() {
+        socket_config.cert_path = args.cert_path;
+        socket_config.key_path = args.key_path;
+    }
 
     let node_id = NodeId::generate();
     let node_addr = NodeAddr::new(node_id.clone()).with_socket_addresses(socket_config.server_addresses());

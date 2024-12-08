@@ -2,7 +2,7 @@ use clap::Parser;
 use foctet_core::frame::{Frame, FrameType};
 use foctet_core::{frame::Payload, node::NodeId};
 use foctet_net::connection::{tcp::TcpSocket, FoctetStream};
-use foctet_net::{socket::SocketConfig, tls::TlsConfig};
+use foctet_net::config::EndpointConfig;
 use std::net::SocketAddr;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
@@ -48,14 +48,10 @@ async fn main() -> Result<()> {
 
     // Parse command line arguments
     let args = Args::parse();
-    let tls_config = if args.insecure {
-        TlsConfig::new_insecure_config()?
-    } else {
-        TlsConfig::new_native_config()?
-    };
-    let socket_config = SocketConfig::new(tls_config)
+    let socket_config = EndpointConfig::new()
         .with_max_read_buffer_size()
-        .with_max_write_buffer_size();
+        .with_max_write_buffer_size()
+        .with_insecure(args.insecure);
 
     let node_id = NodeId::generate();
 

@@ -1,13 +1,13 @@
 use super::{FoctetRecvStream, FoctetSendStream};
 use super::{endpoint, FoctetStream};
-use crate::socket::SocketConfig;
+use crate::config::EndpointConfig;
 use anyhow::anyhow;
 use anyhow::Result;
 use foctet_core::error::{ConnectionError, StreamError};
 use foctet_core::frame::OperationId;
 use foctet_core::frame::{Frame, FrameType, Payload, StreamId};
-use foctet_core::node::NodeAddr;
-use foctet_core::node::{ConnectionId, NodeId};
+use foctet_core::node::{NodeAddr, RelayAddr};
+use foctet_core::node::{SessionId, NodeId};
 use foctet_core::state::ConnectionState;
 use futures::sink::SinkExt;
 use quinn::{ClientConfig, Connection, Endpoint, RecvStream, SendStream, ServerConfig, VarInt};
@@ -23,7 +23,7 @@ pub struct QuicSendStream {
     pub send_stream: SendStream,
     pub node_id: NodeId,
     pub stream_id: StreamId,
-    pub connection_id: ConnectionId,
+    pub session_id: SessionId,
     pub send_buffer_size: usize,
     pub is_closed: bool,
     pub next_operation_id: OperationId,
@@ -31,8 +31,8 @@ pub struct QuicSendStream {
 }
 
 impl FoctetSendStream for QuicSendStream {
-    fn connection_id(&self) -> ConnectionId {
-        self.connection_id.clone()
+    fn session_id(&self) -> SessionId {
+        self.session_id.clone()
     }
     fn stream_id(&self) -> StreamId {
         self.stream_id
@@ -136,15 +136,15 @@ pub struct QuicRecvStream {
     pub recv_stream: RecvStream,
     pub node_id: NodeId,
     pub stream_id: StreamId,
-    pub connection_id: ConnectionId,
+    pub session_id: SessionId,
     pub receive_buffer_size: usize,
     pub is_closed: bool,
     pub remote_address: SocketAddr,
 }
 
 impl FoctetRecvStream for QuicRecvStream {
-    fn connection_id(&self) -> ConnectionId {
-        self.connection_id.clone()
+    fn session_id(&self) -> SessionId {
+        self.session_id.clone()
     }
     fn stream_id(&self) -> StreamId {
         self.stream_id
@@ -266,7 +266,7 @@ pub struct QuicStream {
     pub recv_stream: RecvStream,
     pub node_id: NodeId,
     pub stream_id: StreamId,
-    pub connection_id: ConnectionId,
+    pub session_id: SessionId,
     pub send_buffer_size: usize,
     pub receive_buffer_size: usize,
     pub is_closed: bool,
@@ -275,8 +275,8 @@ pub struct QuicStream {
 }
 
 impl FoctetStream for QuicStream {
-    fn connection_id(&self) -> ConnectionId {
-        self.connection_id.clone()
+    fn session_id(&self) -> SessionId {
+        self.session_id.clone()
     }
     fn stream_id(&self) -> StreamId {
         self.stream_id
@@ -481,7 +481,7 @@ impl FoctetStream for QuicStream {
             send_stream: self.send_stream,
             node_id: self.node_id.clone(),
             stream_id: self.stream_id,
-            connection_id: self.connection_id.clone(),
+            session_id: self.session_id.clone(),
             send_buffer_size: self.send_buffer_size,
             is_closed: self.is_closed,
             next_operation_id: self.next_operation_id,
@@ -491,7 +491,7 @@ impl FoctetStream for QuicStream {
             recv_stream: self.recv_stream,
             node_id: self.node_id.clone(),
             stream_id: self.stream_id,
-            connection_id: self.connection_id.clone(),
+            session_id: self.session_id.clone(),
             receive_buffer_size: self.receive_buffer_size,
             is_closed: self.is_closed,
             remote_address: self.remote_address,
@@ -509,7 +509,7 @@ impl FoctetStream for QuicStream {
                     recv_stream: quic_recv_stream.recv_stream,
                     node_id: quic_send_stream.node_id,
                     stream_id: quic_send_stream.stream_id,
-                    connection_id: quic_send_stream.connection_id,
+                    session_id: quic_send_stream.session_id,
                     send_buffer_size: quic_send_stream.send_buffer_size,
                     receive_buffer_size: quic_recv_stream.receive_buffer_size,
                     is_closed: quic_send_stream.is_closed,
@@ -527,7 +527,7 @@ impl FoctetStream for QuicStream {
 #[derive(Debug)]
 pub struct QuicConnection {
     pub node_id: NodeId,
-    pub connection_id: ConnectionId,
+    pub session_id: SessionId,
     /// The QUIC connection
     pub connection: Connection,
     pub state: ConnectionState,
@@ -537,10 +537,10 @@ pub struct QuicConnection {
 }
 
 impl QuicConnection {
-    pub fn new(node_id: NodeId, connection: Connection, config: &SocketConfig) -> Self {
+    pub fn new(node_id: NodeId, connection: Connection, config: &EndpointConfig) -> Self {
         Self {
             node_id: node_id,
-            connection_id: ConnectionId::new(),
+            session_id: SessionId::new(),
             connection: connection,
             state: ConnectionState::Connected,
             send_buffer_size: config.write_buffer_size(),
@@ -556,7 +556,7 @@ impl QuicConnection {
             recv_stream: recv_stream,
             node_id: self.node_id.clone(),
             stream_id: self.next_stream_id,
-            connection_id: self.connection_id.clone(),
+            session_id: self.session_id.clone(),
             send_buffer_size: self.send_buffer_size,
             receive_buffer_size: self.receive_buffer_size,
             is_closed: false,
@@ -593,7 +593,7 @@ impl QuicConnection {
             recv_stream: recv_stream,
             node_id: self.node_id.clone(),
             stream_id: self.next_stream_id,
-            connection_id: self.connection_id.clone(),
+            session_id: self.session_id.clone(),
             send_buffer_size: self.send_buffer_size,
             receive_buffer_size: self.receive_buffer_size,
             is_closed: false,
@@ -615,8 +615,8 @@ impl QuicConnection {
         self.state = ConnectionState::Disconnected;
         Ok(())
     }
-    pub fn id(&self) -> ConnectionId {
-        self.connection_id.clone()
+    pub fn id(&self) -> SessionId {
+        self.session_id.clone()
     }
     pub fn remote_address(&self) -> SocketAddr {
         self.connection.remote_address()
@@ -626,18 +626,18 @@ impl QuicConnection {
 #[derive(Clone)]
 pub struct QuicSocket {
     pub node_id: NodeId,
-    pub config: SocketConfig,
+    pub config: EndpointConfig,
     pub endpoint: Endpoint,
 }
 
 impl QuicSocket {
     /// Creates a new QUIC socket with given node_id and config.
     /// The socket acts as both a client and a server.
-    pub fn new(node_id: NodeId, config: SocketConfig) -> Result<Self> {
+    pub fn new(node_id: NodeId, config: EndpointConfig) -> Result<Self> {
         let client_config: ClientConfig =
-            endpoint::make_client_config(config.tls_config.client_config.clone())?;
+            endpoint::make_client_config(config.tls_client_config().unwrap())?;
         let server_config: ServerConfig =
-            endpoint::make_server_config(config.tls_config.server_config.clone())?;
+            endpoint::make_server_config(config.tls_server_config().unwrap())?;
         let mut endpoint: Endpoint = Endpoint::server(server_config, config.server_addr)?;
         endpoint.set_default_client_config(client_config);
         Ok(Self {
@@ -648,8 +648,8 @@ impl QuicSocket {
     }
     /// Creates a new QUIC client with given node_id and config.
     /// The socket acts as a client.
-    pub fn new_client(node_id: NodeId, config: SocketConfig) -> Result<Self> {
-        let client_config = endpoint::make_client_config(config.tls_config.client_config.clone())?;
+    pub fn new_client(node_id: NodeId, config: EndpointConfig) -> Result<Self> {
+        let client_config = endpoint::make_client_config(config.tls_client_config().unwrap())?;
         let mut endpoint = Endpoint::client(config.bind_addr)?;
         endpoint.set_default_client_config(client_config);
         Ok(Self {
@@ -722,6 +722,23 @@ impl QuicSocket {
         let sorted_addrs = super::priority::sort_socket_addrs(&node_addr.socket_addresses);
         let addrs = super::filter::filter_reachable_addrs(sorted_addrs, self.config.include_loopback);
         let server_name = node_addr.get_server_name();
+        for addr in addrs {
+            match self.connect(addr, &server_name).await {
+                Ok(connection) => {
+                    tracing::info!("Connected to {}", addr);
+                    return Ok(connection);
+                }
+                Err(e) => {
+                    tracing::error!("Error connecting to {}: {:?}", addr, e);
+                }
+            }
+        }
+        Err(anyhow!("Failed to connect to node"))
+    }
+    pub async fn connect_relay(&mut self, relay_addr: RelayAddr) -> Result<QuicConnection> {
+        let sorted_addrs = super::priority::sort_socket_addrs(&relay_addr.socket_addresses);
+        let addrs = super::filter::filter_reachable_addrs(sorted_addrs, self.config.include_loopback);
+        let server_name = relay_addr.get_server_name();
         for addr in addrs {
             match self.connect(addr, &server_name).await {
                 Ok(connection) => {

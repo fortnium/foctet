@@ -7,12 +7,39 @@ pub mod priority;
 use anyhow::Result;
 use foctet_core::{
     frame::{Frame, OperationId, StreamId},
-    node::{ConnectionId, NodeAddr},
+    node::{SessionId, NodeAddr, NodeId},
 };
 use quic::{QuicStream, QuicSendStream, QuicRecvStream};
 use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc, time::Instant};
 use tcp::{TlsTcpStream, TlsTcpSendStream, TlsTcpRecvStream};
 use tokio::sync::{Mutex, RwLock};
+
+/// Represents the type of connection used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionType {
+    /// Direct connection to the target node.
+    Direct,
+    /// Connection via a relay server.
+    Relay,
+}
+
+/// Connection Information
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    pub node_id: NodeId,
+    pub socket_addr: SocketAddr,
+    pub connection_type: ConnectionType,
+}
+
+impl ConnectionInfo {
+    pub fn new(node_id: NodeId, socket_addr: SocketAddr, connection_type: ConnectionType) -> Self {
+        Self {
+            node_id,
+            socket_addr,
+            connection_type,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct StreamMap {
@@ -86,7 +113,7 @@ impl StreamMap {
 
 #[derive(Debug)]
 pub struct Session {
-    pub connection_id: ConnectionId,
+    pub session_id: SessionId,
     pub node_addr: NodeAddr,
     pub quic_connection: Option<quic::QuicConnection>,
     pub stream_map: StreamMap,
@@ -94,9 +121,9 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(connection_id: ConnectionId, node_addr: NodeAddr) -> Self {
+    pub fn new(session_id: SessionId, node_addr: NodeAddr) -> Self {
         Self {
-            connection_id,
+            session_id,
             node_addr,
             quic_connection: None,
             stream_map: StreamMap::new(),
@@ -105,12 +132,12 @@ impl Session {
     }
 
     pub fn new_with_quic_connection(
-        connection_id: ConnectionId,
+        session_id: SessionId,
         node_addr: NodeAddr,
         quic_connection: quic::QuicConnection,
     ) -> Self {
         Self {
-            connection_id,
+            session_id,
             node_addr,
             quic_connection: Some(quic_connection),
             stream_map: StreamMap::new(),
@@ -237,8 +264,8 @@ impl Session {
 
 #[allow(async_fn_in_trait)]
 pub trait FoctetStream {
-    // Returns the Connection ID
-    fn connection_id(&self) -> ConnectionId;
+    // Returns the Session ID
+    fn session_id(&self) -> SessionId;
 
     /// Returns the Stream ID
     fn stream_id(&self) -> StreamId;
@@ -284,7 +311,7 @@ pub trait FoctetStream {
 #[allow(async_fn_in_trait)]
 pub trait FoctetSendStream {
     // Returns the Connection ID
-    fn connection_id(&self) -> ConnectionId;
+    fn session_id(&self) -> SessionId;
 
     /// Returns the Stream ID
     fn stream_id(&self) -> StreamId;
@@ -313,8 +340,8 @@ pub trait FoctetSendStream {
 
 #[allow(async_fn_in_trait)]
 pub trait FoctetRecvStream {
-    // Returns the Connection ID
-    fn connection_id(&self) -> ConnectionId;
+    // Returns the Session ID
+    fn session_id(&self) -> SessionId;
 
     /// Returns the Stream ID
     fn stream_id(&self) -> StreamId;
@@ -345,11 +372,11 @@ pub enum SendStream {
 }
 
 impl FoctetSendStream for SendStream {
-    // Returns the Connection ID
-    fn connection_id(&self) -> ConnectionId {
+    // Returns the session ID
+    fn session_id(&self) -> SessionId {
         match self {
-            SendStream::Quic(stream) => stream.connection_id(),
-            SendStream::Tcp(stream) => stream.connection_id(),
+            SendStream::Quic(stream) => stream.session_id(),
+            SendStream::Tcp(stream) => stream.session_id(),
         }
     }
 
@@ -426,10 +453,10 @@ pub enum RecvStream {
 
 impl FoctetRecvStream for RecvStream {
     // Returns the Connection ID
-    fn connection_id(&self) -> ConnectionId {
+    fn session_id(&self) -> SessionId {
         match self {
-            RecvStream::Quic(stream) => stream.connection_id(),
-            RecvStream::Tcp(stream) => stream.connection_id(),
+            RecvStream::Quic(stream) => stream.session_id(),
+            RecvStream::Tcp(stream) => stream.session_id(),
         }
     }
 
@@ -499,10 +526,10 @@ pub enum NetworkStream {
 
 #[allow(async_fn_in_trait)]
 impl FoctetStream for NetworkStream {
-    fn connection_id(&self) -> ConnectionId {
+    fn session_id(&self) -> SessionId {
         match self {
-            NetworkStream::Quic(stream) => stream.connection_id(),
-            NetworkStream::Tcp(stream) => stream.connection_id(),
+            NetworkStream::Quic(stream) => stream.session_id(),
+            NetworkStream::Tcp(stream) => stream.session_id(),
         }
     }
     fn stream_id(&self) -> StreamId {

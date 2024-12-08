@@ -1,16 +1,14 @@
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::{Duration, Instant}};
 
-use foctet_core::{frame::{Frame, OperationId, StreamId}, node::{ConnectionId, NodeAddr, NodeId}};
+use foctet_core::{frame::{Frame, OperationId, StreamId}, node::{SessionId, NodeAddr, NodeId}};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;
-use crate::{connection::{quic::{QuicConnection, QuicSocket}, tcp::{TcpSocket, TlsTcpStream}, FoctetRecvStream, FoctetSendStream, FoctetStream, NetworkStream, RecvStream, SendStream, Session}, message::{AckMessage, ControlCommand, ReceiveType, RelayActorMessage, SessionCommand, TransferPayload}, socket::{ConnectionInfo, ConnectionType}};
+use crate::{config::EndpointConfig, connection::{quic::{QuicConnection, QuicSocket}, tcp::{TcpSocket, TlsTcpStream}, ConnectionInfo, ConnectionType, FoctetRecvStream, FoctetSendStream, FoctetStream, NetworkStream, RecvStream, SendStream, Session}, message::{AckMessage, ControlCommand, RelayActorMessage, SessionCommand, TransferPayload}};
 
-use crate::socket::Socket;
-
-pub struct RelaySocketActor {
-    /// The socket reference
-    pub socket: Arc<RwLock<Socket>>,
+pub struct RelayActor {
+    pub node_addr: NodeAddr,
+    pub config: EndpointConfig,
     /// Sender for actor messages
     pub msg_sender: mpsc::Sender<RelayActorMessage>,
     /// Destination nodes
@@ -25,14 +23,13 @@ pub struct RelaySocketActor {
     pub tcp_socket: TcpSocket,
 }
 
-impl RelaySocketActor {
-    pub async fn new(socket: Arc<RwLock<Socket>>, msg_sender: mpsc::Sender<RelayActorMessage>, cancel_token: CancellationToken) -> Result<Self> {
-        let sock = socket.read().await;
-        let quic_socket = QuicSocket::new(sock.node_addr.node_id.clone(), sock.config.clone())?;
-        let tcp_socket = TcpSocket::new(sock.node_addr.node_id.clone(), sock.config.clone())?;
-        drop(sock);
+impl RelayActor {
+    pub async fn new(node_addr: NodeAddr, config: EndpointConfig, msg_sender: mpsc::Sender<RelayActorMessage>, cancel_token: CancellationToken) -> Result<Self> {
+        let quic_socket = QuicSocket::new(node_addr.node_id.clone(), config.clone())?;
+        let tcp_socket = TcpSocket::new(node_addr.node_id.clone(), config.clone())?;
         Ok(Self {
-            socket,
+            node_addr,
+            config,
             msg_sender,
             destination_nodes: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -164,9 +161,9 @@ impl RelaySocketActor {
                 let stream = connection.open_stream().await?;
                 let stream_id = stream.stream_id();
                 // Create session
-                let connection_id = ConnectionId::new();
+                let session_id = SessionId::new();
                 let socket_addr = connection.remote_address();
-                let session = Session::new_with_quic_connection(connection_id, node_addr.clone(), connection);
+                let session = Session::new_with_quic_connection(session_id, node_addr.clone(), connection);
                 session.add_stream(stream_id, NetworkStream::Quic(stream)).await;
                 self.sessions.write().await.insert(node_addr.node_id.clone(), session);
                 return Ok(socket_addr);
@@ -183,7 +180,7 @@ impl RelaySocketActor {
                 let stream_id = stream.stream_id();
                 let socket_addr = stream.remote_address();
                 // Create session
-                let connection_id = ConnectionId::new();
+                let connection_id = SessionId::new();
                 let session = Session::new(connection_id, node_addr.clone());
                 session.add_stream(stream_id, NetworkStream::Tcp(stream)).await;
                 self.sessions.write().await.insert(node_addr.node_id.clone(), session);
@@ -221,7 +218,7 @@ impl RelaySocketActor {
             let stream = quic_connection.accept_stream().await.unwrap();
             let stream_id = stream.stream_id();
             let node_addr = NodeAddr::new(node_id.clone());
-            let session = Session::new_with_quic_connection(ConnectionId::new(), node_addr, quic_connection);
+            let session = Session::new_with_quic_connection(SessionId::new(), node_addr, quic_connection);
             session.add_stream(stream_id, NetworkStream::Quic(stream)).await;
             sessions.write().await.insert(node_id, session);
         }
@@ -244,7 +241,7 @@ impl RelaySocketActor {
             let node_id = tcp_connection.node_id.clone();
             let stream_id = tcp_connection.stream_id();
             let node_addr = NodeAddr::new(node_id.clone());
-            let session = Session::new(ConnectionId::new(), node_addr);
+            let session = Session::new(SessionId::new(), node_addr);
             session.add_stream(stream_id, NetworkStream::Tcp(tcp_connection)).await;
             sessions.write().await.insert(node_id, session);
         }

@@ -3,14 +3,14 @@ use std::{
     sync::Arc,
 };
 
-use foctet_core::node::{ConnectionId, NodeAddr, NodeId};
+use foctet_core::node::{SessionId, NodeAddr, NodeId};
 use tokio::sync::RwLock;
 
-use crate::{socket::SocketConfig, connection::Session};
+use crate::{config::EndpointConfig, connection::Session};
 
 pub struct RelayServer {
     pub node_addr: NodeAddr,
-    pub config: SocketConfig,
+    pub config: EndpointConfig,
     pub node_sessions: Arc<RwLock<HashMap<NodeId, Session>>>,
-    pub relay_sessions: Arc<RwLock<HashMap<ConnectionId, HashSet<NodeId>>>>,
+    pub relay_sessions: Arc<RwLock<HashMap<SessionId, HashSet<NodeId>>>>,
 }

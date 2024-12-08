@@ -1,9 +1,7 @@
 use std::{fmt, path::PathBuf};
 
 use crate::{
-    content::ContentId,
-    hash::Blake3Hash,
-    time::UnixTimestamp,
+    content::ContentId, hash::Blake3Hash, node::{SessionId, NodeId}, time::UnixTimestamp
 };
 use serde::{Deserialize, Serialize};
 
@@ -215,6 +213,7 @@ pub enum FrameType {
     TransferStart,
     EndOfTransfer,
     ContentRequest,
+    Handshake,
 }
 
 /// Identifier for a stream within a particular connection
@@ -294,8 +293,8 @@ pub enum Payload {
     Text(String),
     FileMetadata(FileMetadata),
     Metadata(Metadata),
-    //ConnectionInfo(ConnectionInfo),
     ContentId(ContentId),
+    Handshake(HandshakeData),
 }
 
 impl Payload {
@@ -313,13 +312,13 @@ impl Payload {
                 // Serialize the metadata to bytes and get the size
                 bincode::serialize(metadata).unwrap_or_default().len()
             }
-            /* Self::ConnectionInfo(info) => {
-                // Serialize the connection info to bytes and get the size
-                bincode::serialize(info).unwrap_or_default().len()
-            } */
             Self::ContentId(id) => {
                 // Serialize the content ID to bytes and get the size
                 bincode::serialize(id).unwrap_or_default().len()
+            }
+            Self::Handshake(data) => {
+                // Serialize the handshake data to bytes and get the size
+                bincode::serialize(data).unwrap_or_default().len()
             }
         }
     }
@@ -343,13 +342,13 @@ impl Payload {
     pub fn metadata(metadata: Metadata) -> Self {
         Self::Metadata(metadata)
     }
-    /* /// Create a new connection info payload
-    pub fn connection_info(info: ConnectionInfo) -> Self {
-        Self::ConnectionInfo(info)
-    } */
     /// Create a new content ID payload
     pub fn content_id(id: ContentId) -> Self {
         Self::ContentId(id)
+    }
+    /// Create a new handshake data payload
+    pub fn handshake(data: HandshakeData) -> Self {
+        Self::Handshake(data)
     }
 }
 
@@ -394,8 +393,37 @@ pub struct LocalFileMetadata {
     pub accessed: UnixTimestamp,
 }
 
-/* #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct ConnectionInfo {
-    pub node_id: NodeId,
-    pub connection_id: Option<ConnectionId>,
-} */
+/// Represents the handshake data exchanged during relay connection setup
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct HandshakeData {
+    pub src_node_id: NodeId,
+    pub dst_node_id: NodeId,
+    pub session_id: SessionId,
+    pub data: Option<Vec<u8>>,
+}
+
+impl HandshakeData {
+    /// Create a new handshake data
+    pub fn new(src_node_id: NodeId, dst_node_id: NodeId, session_id: SessionId) -> Self {
+        Self {
+            src_node_id,
+            dst_node_id,
+            session_id,
+            data: None,
+        }
+    }
+    /// Create a new handshake data with additional data
+    pub fn with_data(
+        src_node_id: NodeId,
+        dst_node_id: NodeId,
+        session_id: SessionId,
+        data: Vec<u8>,
+    ) -> Self {
+        Self {
+            src_node_id,
+            dst_node_id,
+            session_id,
+            data: Some(data),
+        }
+    }
+}

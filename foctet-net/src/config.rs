@@ -26,16 +26,13 @@ pub enum TransportProtocol {
     Tcp,
 }
 
-pub enum EndpointConfig {
-    Client(ClientConfig),
-    Server(ServerConfig),
-}
-
+/// The configuration for the socket.
 #[derive(Debug, Clone)]
-pub struct ServerConfig {
+pub struct EndpointConfig {
     pub bind_addr: SocketAddr,
+    pub server_addr: SocketAddr,
     pub transport_protocol: TransportProtocol,
-    pub tls_config: TlsServerConfig,
+    pub connection_timeout: Duration,
     pub read_timeout: Duration,
     pub write_timeout: Duration,
     pub max_retries: usize,
@@ -43,16 +40,18 @@ pub struct ServerConfig {
     pub write_buffer_size: usize,
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
+    pub insecure: bool,
     pub include_loopback: bool,
 }
 
-impl ServerConfig {
-    /// Create a new server configuration with the given TLS configuration.
-    pub fn new(tls_config: TlsServerConfig) -> Self {
+impl EndpointConfig {
+    /// Create a new socket configuration with the default values.
+    pub fn new() -> Self {
         Self {
-            bind_addr: DEFAULT_SERVER_V4_ADDR,
+            bind_addr: DEFAULT_BIND_V4_ADDR,
+            server_addr: DEFAULT_SERVER_V4_ADDR,
             transport_protocol: TransportProtocol::Both,
-            tls_config: tls_config,
+            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             read_timeout: DEFAULT_RECEIVE_TIMEOUT,
             write_timeout: DEFAULT_SEND_TIMEOUT,
             max_retries: DEFAULT_MAX_RETRIES,
@@ -60,21 +59,65 @@ impl ServerConfig {
             write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
             cert_path: None,
             key_path: None,
+            insecure: false,
             include_loopback: false,
         }
     }
+    /// Create a new socket configuration with the default bind address.
+    pub fn new_with_default_addr() -> Self {
+        let default_bind_addr = crate::device::get_default_bind_addr();
+        Self {
+            bind_addr: default_bind_addr,
+            server_addr: DEFAULT_SERVER_V4_ADDR,
+            transport_protocol: TransportProtocol::Both,
+            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
+            read_timeout: DEFAULT_RECEIVE_TIMEOUT,
+            write_timeout: DEFAULT_SEND_TIMEOUT,
+            max_retries: DEFAULT_MAX_RETRIES,
+            read_buffer_size: DEFAULT_READ_BUFFER_SIZE,
+            write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
+            cert_path: None,
+            key_path: None,
+            insecure: false,
+            include_loopback: false,
+        }
+    }
+
     pub fn with_bind_addr(mut self, addr: SocketAddr) -> Self {
         self.bind_addr = addr;
         self
     }
-    pub fn with_transport_protocol(mut self, transport_protocol: TransportProtocol) -> Self {
+
+    pub fn with_server_addr(mut self, addr: SocketAddr) -> Self {
+        self.server_addr = addr;
+        self
+    }
+
+    pub fn with_protocol(mut self, transport_protocol: TransportProtocol) -> Self {
         self.transport_protocol = transport_protocol;
         self
     }
-    pub fn with_tls_config(mut self, config: TlsServerConfig) -> Self {
-        self.tls_config = config;
+
+    pub fn with_connection_timeout(mut self, timeout: Duration) -> Self {
+        self.connection_timeout = timeout;
         self
     }
+
+    pub fn with_read_timeout(mut self, timeout: Duration) -> Self {
+        self.read_timeout = timeout;
+        self
+    }
+
+    pub fn with_write_timeout(mut self, timeout: Duration) -> Self {
+        self.write_timeout = timeout;
+        self
+    }
+
+    pub fn with_max_retries(mut self, retries: usize) -> Self {
+        self.max_retries = retries;
+        self
+    }
+
     pub fn with_cert_path(mut self, path: PathBuf) -> Self {
         self.cert_path = Some(path);
         self
@@ -85,6 +128,11 @@ impl ServerConfig {
         self
     }
 
+    pub fn with_insecure(mut self, insecure: bool) -> Self {
+        self.insecure = insecure;
+        self
+    }
+
     pub fn with_include_loopback(mut self, include_loopback: bool) -> Self {
         self.include_loopback = include_loopback;
         self
@@ -134,6 +182,18 @@ impl ServerConfig {
     pub fn with_max_read_buffer_size(mut self) -> Self {
         self.read_buffer_size = MAX_READ_BUFFER_SIZE;
         self
+    }
+    /// Return the maximum number of retries.
+    pub fn max_retries(&self) -> usize {
+        self.max_retries
+    }
+    /// Returns the write buffer size.
+    pub fn write_buffer_size(&self) -> usize {
+        self.write_buffer_size
+    }
+    /// Returns the read buffer size.
+    pub fn read_buffer_size(&self) -> usize {
+        self.read_buffer_size
     }
     /// Returns the server addresses.
     /// If the server address is unspecified, it returns the default server addresses.
@@ -142,128 +202,40 @@ impl ServerConfig {
     /// If the server address is IPv6 unspecified, it returns the default server addresses, both IPv4 and IPv6 for dual-stack.
     pub fn server_addresses(&self) -> BTreeSet<SocketAddr> {
         let mut addrs = BTreeSet::new();
-        match self.bind_addr.ip() {
+        match self.server_addr.ip() {
             IpAddr::V4(ipv4addr) => {
                 if ipv4addr.is_unspecified() {
                     addrs = device::get_default_ipv4_server_addrs(self.include_loopback);
                 } else {
-                    addrs.insert(self.bind_addr);
+                    addrs.insert(self.server_addr);
                 }
             },
             IpAddr::V6(ipv6addr) => {
                 if ipv6addr.is_unspecified() {
                     addrs = device::get_default_server_addrs(self.include_loopback);
                 } else {
-                    addrs.insert(self.bind_addr);
+                    addrs.insert(self.server_addr);
                 }
             },
         }
         addrs
     }
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self::new(TlsServerConfigBuilder::new_insecure(vec!["localhost".to_string()]).unwrap())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ClientConfig {
-    pub bind_addr: SocketAddr,
-    pub transport_protocol: TransportProtocol,
-    pub tls_config: TlsClientConfig,
-    pub connection_timeout: Duration,
-    pub read_timeout: Duration,
-    pub max_retries: usize,
-    pub read_buffer_size: usize,
-    pub write_buffer_size: usize,
-    pub write_timeout: Duration,
-    pub include_loopback: bool,
-}
-
-impl ClientConfig {
-    /// Create a new client configuration with the given TLS configuration.
-    pub fn new(tls_config: TlsClientConfig) -> Self {
-        Self {
-            bind_addr: DEFAULT_BIND_V4_ADDR,
-            transport_protocol: TransportProtocol::Both,
-            tls_config: tls_config,
-            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
-            read_timeout: DEFAULT_RECEIVE_TIMEOUT,
-            write_timeout: DEFAULT_SEND_TIMEOUT,
-            max_retries: DEFAULT_MAX_RETRIES,
-            read_buffer_size: DEFAULT_READ_BUFFER_SIZE,
-            write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
-            include_loopback: false,
+    pub fn tls_client_config(&self) -> Result<TlsClientConfig> {
+        if self.insecure {
+            TlsClientConfigBuilder::new_insecure()
+        } else {
+            TlsClientConfigBuilder::new_with_native_certs()
         }
     }
-    pub fn with_bind_addr(mut self, addr: SocketAddr) -> Self {
-        self.bind_addr = addr;
-        self
-    }
-    pub fn with_transport_protocol(mut self, transport_protocol: TransportProtocol) -> Self {
-        self.transport_protocol = transport_protocol;
-        self
-    }
-    pub fn with_tls_config(mut self, config: TlsClientConfig) -> Self {
-        self.tls_config = config;
-        self
-    }
-    pub fn with_include_loopback(mut self, include_loopback: bool) -> Self {
-        self.include_loopback = include_loopback;
-        self
-    }
-    /// Sets a custom buffer size for sending data using builder pattern.
-    pub fn with_write_buffer_size(mut self, size: usize) -> Result<Self> {
-        if size < MIN_WRITE_BUFFER_SIZE || size > MAX_WRITE_BUFFER_SIZE {
-            return Err(anyhow!("Write buffer size out of range"));
+    pub fn tls_server_config(&self) -> Result<TlsServerConfig> {
+        if self.insecure {
+            TlsServerConfigBuilder::new_insecure(vec!["localhost".into()])
+        } else {
+            if self.cert_path.is_some() && self.key_path.is_some() {
+                TlsServerConfigBuilder::new_with_cert(&self.cert_path.as_ref().unwrap(), &self.key_path.as_ref().unwrap())
+            } else {
+                Err(anyhow!("Certificate and key paths are not set"))
+            }
         }
-        self.write_buffer_size = size;
-        Ok(self)
-    }
-    /// Sets a custom buffer size for receiving data using builder pattern.
-    pub fn with_read_buffer_size(mut self, size: usize) -> Result<Self> {
-        if size < MIN_READ_BUFFER_SIZE || size > MAX_READ_BUFFER_SIZE {
-            return Err(anyhow!("Read buffer size out of range"));
-        }
-        self.read_buffer_size = size;
-        Ok(self)
-    }
-    /// Sets the write buffer size to the minimum value using builder pattern.
-    pub fn with_min_write_buffer_size(mut self) -> Self {
-        self.write_buffer_size = MIN_WRITE_BUFFER_SIZE;
-        self
-    }
-    /// Sets the read buffer size to the minimum value using builder pattern.
-    pub fn with_min_read_buffer_size(mut self) -> Self {
-        self.read_buffer_size = MIN_READ_BUFFER_SIZE;
-        self
-    }
-    /// Sets the write buffer size to the default value using builder pattern.
-    pub fn with_default_write_buffer_size(mut self) -> Self {
-        self.write_buffer_size = DEFAULT_WRITE_BUFFER_SIZE;
-        self
-    }
-    /// Sets the read buffer size to the default value using builder pattern.
-    pub fn with_default_read_buffer_size(mut self) -> Self {
-        self.read_buffer_size = DEFAULT_READ_BUFFER_SIZE;
-        self
-    }
-    /// Sets the write buffer size to the maximum value using builder pattern.
-    pub fn with_max_write_buffer_size(mut self) -> Self {
-        self.write_buffer_size = MAX_WRITE_BUFFER_SIZE;
-        self
-    }
-    /// Sets the read buffer size to the maximum value using builder pattern.
-    pub fn with_max_read_buffer_size(mut self) -> Self {
-        self.read_buffer_size = MAX_READ_BUFFER_SIZE;
-        self
-    }
-}
-
-impl Default for ClientConfig {
-    fn default() -> Self {
-        Self::new(TlsClientConfigBuilder::new_insecure().unwrap())
     }
 }

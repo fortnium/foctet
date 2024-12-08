@@ -127,12 +127,12 @@ impl NodeAddr {
     }
 }
 
-/// The connection ID for a connection.
+/// The session ID for a connection.
 /// 128-bit UUID (Universally Unique Identifier) v4 is used.
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct ConnectionId([u8; UUID_V4_BYTES_LEN]);
+pub struct SessionId([u8; UUID_V4_BYTES_LEN]);
 
-impl ConnectionId {
+impl SessionId {
     /// Create a new connection ID with the given string.
     pub fn new() -> Self {
         Self(key::generate_uuid_v4_bytes())
@@ -172,8 +172,8 @@ pub struct RelayAddr {
     pub relay_server_name: Option<String>,
     /// The QUIC/TCP socket address of the relay server.
     pub socket_addresses: BTreeSet<SocketAddr>,
-    /// Connection ID for the relay server.
-    pub relay_connection_id: Option<ConnectionId>,
+    /// Session ID for the relay server.
+    pub relay_session_id: Option<SessionId>,
 }
 
 impl RelayAddr {
@@ -183,7 +183,7 @@ impl RelayAddr {
             relay_node_id,
             relay_server_name: None,
             socket_addresses: BTreeSet::new(),
-            relay_connection_id: None,
+            relay_session_id: None,
         }
     }
     pub fn unspecified() -> Self {
@@ -191,7 +191,7 @@ impl RelayAddr {
             relay_node_id: NodePublicKey::zero(),
             relay_server_name: None,
             socket_addresses: BTreeSet::new(),
-            relay_connection_id: None,
+            relay_session_id: None,
         }
     }
     pub fn with_socket_addr(mut self, socket_addr: SocketAddr) -> Self {
@@ -219,9 +219,9 @@ impl RelayAddr {
         self.relay_server_name = Some(server_name);
         self
     }
-    /// Set connection ID.
-    pub fn with_connection_id(mut self, connection_id: ConnectionId) -> Self {
-        self.relay_connection_id = Some(connection_id);
+    /// Set session ID.
+    pub fn with_connection_id(mut self, session_id: SessionId) -> Self {
+        self.relay_session_id = Some(session_id);
         self
     }
     /// Check if the node address is unspecified.
@@ -258,16 +258,16 @@ impl RelayAddr {
 pub struct NodeConnection {
     /// The node ID of the node.
     pub node_id: NodeId,
-    /// Connection ID for the node.
-    pub connection_id: ConnectionId,
+    /// Session ID for the node.
+    pub session_id: SessionId,
 }
 
 impl NodeConnection {
     /// Create a new node connection with the given node ID and connection ID.
-    pub fn new(node_id: NodeId, connection_id: ConnectionId) -> Self {
+    pub fn new(node_id: NodeId, session_id: SessionId) -> Self {
         Self {
             node_id,
-            connection_id,
+            session_id,
         }
     }
 }

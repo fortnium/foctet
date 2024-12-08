@@ -1,13 +1,14 @@
 use super::FoctetRecvStream;
 use super::FoctetSendStream;
 use super::FoctetStream;
-use crate::socket::SocketConfig;
+use crate::config::EndpointConfig;
 use anyhow::anyhow;
 use anyhow::Result;
 use foctet_core::error::StreamError;
 use foctet_core::frame::OperationId;
 use foctet_core::frame::{Frame, FrameType, Payload, StreamId};
-use foctet_core::node::{ConnectionId, NodeAddr, NodeId};
+use foctet_core::node::RelayAddr;
+use foctet_core::node::{SessionId, NodeAddr, NodeId};
 use futures::sink::SinkExt;
 use tokio_util::sync::CancellationToken;
 use std::{net::SocketAddr, sync::Arc};
@@ -24,7 +25,7 @@ pub struct TlsTcpSendStream {
     pub send_stream: WriteHalf<TlsStream<TcpStream>>,
     pub node_id: NodeId,
     pub stream_id: StreamId,
-    pub connection_id: ConnectionId,
+    pub session_id: SessionId,
     pub send_buffer_size: usize,
     pub is_closed: bool,
     pub next_operation_id: OperationId,
@@ -32,8 +33,8 @@ pub struct TlsTcpSendStream {
 }
 
 impl FoctetSendStream for TlsTcpSendStream {
-    fn connection_id(&self) -> ConnectionId {
-        self.connection_id.clone()
+    fn session_id(&self) -> SessionId {
+        self.session_id.clone()
     }
     fn stream_id(&self) -> StreamId {
         self.stream_id
@@ -135,15 +136,15 @@ pub struct TlsTcpRecvStream {
     pub recv_stream: ReadHalf<TlsStream<TcpStream>>,
     pub node_id: NodeId,
     pub stream_id: StreamId,
-    pub connection_id: ConnectionId,
+    pub session_id: SessionId,
     pub receive_buffer_size: usize,
     pub is_closed: bool,
     pub remote_address: SocketAddr,
 }
 
 impl FoctetRecvStream for TlsTcpRecvStream {
-    fn connection_id(&self) -> ConnectionId {
-        self.connection_id.clone()
+    fn session_id(&self) -> SessionId {
+        self.session_id.clone()
     }
     fn stream_id(&self) -> StreamId {
         self.stream_id
@@ -233,7 +234,7 @@ pub struct TlsTcpStream {
     pub stream: TlsStream<TcpStream>,
     pub node_id: NodeId,
     pub stream_id: StreamId,
-    pub connection_id: ConnectionId,
+    pub session_id: SessionId,
     pub send_buffer_size: usize,
     pub receive_buffer_size: usize,
     pub is_closed: bool,
@@ -242,8 +243,8 @@ pub struct TlsTcpStream {
 }
 
 impl FoctetStream for TlsTcpStream {
-    fn connection_id(&self) -> ConnectionId {
-        self.connection_id.clone()
+    fn session_id(&self) -> SessionId {
+        self.session_id.clone()
     }
     fn stream_id(&self) -> StreamId {
         self.stream_id
@@ -415,7 +416,7 @@ impl FoctetStream for TlsTcpStream {
             send_stream: write_half,
             node_id: self.node_id.clone(),
             stream_id: self.stream_id,
-            connection_id: self.connection_id.clone(),
+            session_id: self.session_id.clone(),
             send_buffer_size: self.send_buffer_size,
             is_closed: self.is_closed,
             next_operation_id: self.next_operation_id,
@@ -425,7 +426,7 @@ impl FoctetStream for TlsTcpStream {
             recv_stream: read_half,
             node_id: self.node_id.clone(),
             stream_id: self.stream_id,
-            connection_id: self.connection_id,
+            session_id: self.session_id,
             receive_buffer_size: self.receive_buffer_size,
             is_closed: self.is_closed,
             remote_address: self.remote_address,
@@ -442,7 +443,7 @@ impl FoctetStream for TlsTcpStream {
                     stream: stream,
                     node_id: tcp_send_stream.node_id,
                     stream_id: tcp_send_stream.stream_id,
-                    connection_id: tcp_send_stream.connection_id,
+                    session_id: tcp_send_stream.session_id,
                     send_buffer_size: tcp_send_stream.send_buffer_size,
                     receive_buffer_size: tcp_recv_stream.receive_buffer_size,
                     is_closed: tcp_send_stream.is_closed,
@@ -458,7 +459,7 @@ impl FoctetStream for TlsTcpStream {
 #[derive(Clone)]
 pub struct TcpSocket {
     pub node_id: NodeId,
-    pub config: SocketConfig,
+    pub config: EndpointConfig,
     pub tls_connector: TlsConnector,
     pub tls_acceptor: TlsAcceptor,
 }
@@ -466,9 +467,9 @@ pub struct TcpSocket {
 impl TcpSocket {
     /// Creates a new TCP socket with given node_id and config
     /// The socket acts as both a client and a server.
-    pub fn new(node_id: NodeId, config: SocketConfig) -> Result<Self> {
-        let tls_connector = TlsConnector::from(Arc::new(config.tls_config.client_config.clone()));
-        let tls_acceptor = TlsAcceptor::from(Arc::new(config.tls_config.server_config.clone()));
+    pub fn new(node_id: NodeId, config: EndpointConfig) -> Result<Self> {
+        let tls_connector = TlsConnector::from(Arc::new(config.tls_client_config().unwrap()));
+        let tls_acceptor = TlsAcceptor::from(Arc::new(config.tls_server_config().unwrap()));
         Ok(Self {
             node_id: node_id,
             config: config,
@@ -490,7 +491,7 @@ impl TcpSocket {
             stream: TlsStream::Client(tls_stream),
             node_id: self.node_id.clone(),
             stream_id: StreamId::new(0),
-            connection_id: ConnectionId::new(),
+            session_id: SessionId::new(),
             send_buffer_size: self.config.write_buffer_size(),
             receive_buffer_size: self.config.read_buffer_size(),
             is_closed: false,
@@ -499,27 +500,6 @@ impl TcpSocket {
         };
         Ok(tls_tcp_stream)
     }
-
-    /* pub async fn listen(&mut self, sender: mpsc::Sender<TlsTcpStream>) -> Result<()> {
-        let listener = TcpListener::bind(self.config.server_addr).await?;
-        while let Ok((stream, _addr)) = listener.accept().await {
-            let remote_address = stream.peer_addr()?;
-            let tls_stream = self.tls_acceptor.accept(stream).await?;
-            let tls_tcp_stream = TlsTcpStream {
-                stream: TlsStream::Server(tls_stream),
-                node_id: self.node_id.clone(),
-                stream_id: StreamId::new(0),
-                connection_id: ConnectionId::new(),
-                send_buffer_size: self.config.write_buffer_size(),
-                receive_buffer_size: self.config.read_buffer_size(),
-                is_closed: false,
-                next_operation_id: OperationId(0),
-                remote_address: remote_address,
-            };
-            sender.send(tls_tcp_stream).await?;
-        }
-        Ok(())
-    } */
 
     pub async fn listen(&mut self, sender: mpsc::Sender<TlsTcpStream>, cancel_token: CancellationToken) -> Result<()> {
         let listener = TcpListener::bind(self.config.server_addr).await?;
@@ -545,7 +525,7 @@ impl TcpSocket {
                                         stream: TlsStream::Server(tls_stream),
                                         node_id: self.node_id.clone(),
                                         stream_id: StreamId::new(0),
-                                        connection_id: ConnectionId::new(),
+                                        session_id: SessionId::new(),
                                         send_buffer_size: self.config.write_buffer_size(),
                                         receive_buffer_size: self.config.read_buffer_size(),
                                         is_closed: false,
@@ -576,6 +556,24 @@ impl TcpSocket {
         let sorted_addrs = super::priority::sort_socket_addrs(&node_addr.socket_addresses);
         let addrs = super::filter::filter_reachable_addrs(sorted_addrs, self.config.include_loopback);
         let server_name = node_addr.get_server_name();
+        for addr in addrs {
+            match self.connect(addr, &server_name).await {
+                Ok(connection) => {
+                    tracing::info!("Connected to {}", addr);
+                    return Ok(connection);
+                }
+                Err(e) => {
+                    tracing::error!("Error connecting to {}: {:?}", addr, e);
+                }
+            }
+        }
+        Err(anyhow!("Failed to connect to node"))
+    }
+
+    pub async fn connect_relay(&mut self, relay_addr: RelayAddr) -> Result<TlsTcpStream> {
+        let sorted_addrs = super::priority::sort_socket_addrs(&relay_addr.socket_addresses);
+        let addrs = super::filter::filter_reachable_addrs(sorted_addrs, self.config.include_loopback);
+        let server_name = relay_addr.get_server_name();
         for addr in addrs {
             match self.connect(addr, &server_name).await {
                 Ok(connection) => {

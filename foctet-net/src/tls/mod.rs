@@ -154,6 +154,10 @@ impl TlsServerConfigBuilder {
             .with_single_cert(certs, key)?;
         Ok(rustls_server_config)
     }
+    pub fn with_alpn_protocols(&mut self, protocols: Vec<Vec<u8>>) -> &mut Self {
+        self.inner.alpn_protocols = protocols;
+        self
+    }
 }
 
 pub struct TlsClientConfigBuilder  {
@@ -181,7 +185,10 @@ impl TlsClientConfigBuilder {
             .with_no_client_auth();
         Ok(client_config)
     }
-
+    pub fn with_alpn_protocols(&mut self, protocols: Vec<Vec<u8>>) -> &mut Self {
+        self.inner.alpn_protocols = protocols;
+        self
+    }
 }
 
 #[cfg(test)]
