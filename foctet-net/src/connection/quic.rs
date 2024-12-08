@@ -621,6 +621,10 @@ impl QuicConnection {
     pub fn remote_address(&self) -> SocketAddr {
         self.connection.remote_address()
     }
+    /// Check if the connection is still active.
+    pub fn is_active(&self) -> bool {
+        self.state != ConnectionState::Disconnected
+    }
 }
 
 #[derive(Clone)]

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -12,7 +13,9 @@ use crate::relay::client::RelayClient;
 use anyhow::Result;
 use anyhow::anyhow;
 use foctet_core::node::NodeAddr;
+use foctet_core::node::NodeId;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 /// Builder for [`Endpoint`].
@@ -97,6 +100,7 @@ impl EndpointBuilder {
             tcp_socket,
             cancellation_token: CancellationToken::new(),
             relay_client: relay_client,
+            quic_connections: Mutex::new(HashMap::new()),
         })
     }
 }
@@ -115,6 +119,8 @@ pub struct Endpoint {
     cancellation_token: CancellationToken,
     /// The relay client for the endpoint.
     relay_client: RelayClient,
+    /// Active QUIC connections
+    quic_connections: Mutex<HashMap<NodeId, QuicConnection>>,
 }
 
 impl Endpoint {
@@ -136,8 +142,22 @@ impl Endpoint {
         }
     }
     pub async fn connect_quic_direct(&mut self, node_addr: NodeAddr) -> Result<NetworkStream> {
+        let mut connections = self.quic_connections.lock().await;
+
+        // Check if a connection already exists
+        let node_id = node_addr.node_id.clone();
+        if let Some(conn) = connections.get_mut(&node_id) {
+            // Use the existing connection to open a new stream
+            tracing::info!("Reusing existing QUIC connection to {:?}", node_addr);
+            let stream = conn.open_stream().await?;
+            return Ok(NetworkStream::Quic(stream));
+        }
+
         let mut conn = self.quic_socket.connect_node(node_addr).await?;
         let stream = conn.open_stream().await?;
+        // Store the connection for reuse
+        connections.insert(node_id, conn);
+
         Ok(NetworkStream::Quic(stream))
     }
     pub async fn connect_quic_relay(&mut self, node_addr: NodeAddr) -> Result<NetworkStream> {
@@ -251,6 +271,47 @@ impl Endpoint {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Remove stale or unused QUIC connections from the connection pool.
+    pub async fn prune_quic_connections(&self) {
+        let mut connections = self.quic_connections.lock().await;
+
+        // Filter out connections that are no longer active or required.
+        connections.retain(|node_id, connection| {
+            let is_active = connection.is_active();
+            if !is_active {
+                tracing::info!("Removing inactive QUIC connection to node: {:?}", node_id);
+            }
+            is_active
+        });
+
+        tracing::info!(
+            "Pruned QUIC connections. Remaining active connections: {}",
+            connections.len()
+        );
+    }
+
+    /// Gracefully shutdown the `Endpoint`.
+    pub async fn shutdown(&self) -> Result<()> {
+        tracing::info!("Shutting down Endpoint...");
+
+        // Cancel any ongoing operations
+        self.cancellation_token.cancel();
+        tracing::info!("Cancellation token triggered.");
+
+        // Clean up active QUIC connections
+        let mut quic_connections = self.quic_connections.lock().await;
+        for (node_id, mut connection) in quic_connections.drain() {
+            tracing::info!("Closing QUIC connection to node: {:?}", node_id);
+            if let Err(e) = connection.close().await {
+                tracing::warn!("Error closing QUIC connection to {:?}: {:?}", node_id, e);
+            }
+        }
+        tracing::info!("All QUIC connections closed.");
+
+        tracing::info!("Endpoint shut down completed.");
         Ok(())
     }
 }
