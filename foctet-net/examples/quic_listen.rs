@@ -46,6 +46,10 @@ struct Args {
         help = "Path to the private key file (PEM or DER format)."
     )]
     key_path: Option<PathBuf>,
+
+    /// Insecure mode to use self-signed certificate and skip certificate verification.
+    #[arg(short, long, help = "Insecure mode to use self-signed certificate and skip certificate verification.")]
+    insecure: bool,
 }
 
 #[tokio::main]
@@ -66,7 +70,7 @@ async fn main() -> Result<()> {
     let mut socket_config = EndpointConfig::new()
         .with_max_read_buffer_size()
         .with_max_write_buffer_size()
-        .with_insecure(false);
+        .with_insecure(args.insecure);
 
     if args.cert_path.is_some() & args.cert_path.is_some() {
         socket_config.cert_path = args.cert_path;
