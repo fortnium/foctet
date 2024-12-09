@@ -40,6 +40,7 @@ pub struct EndpointConfig {
     pub write_buffer_size: usize,
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
+    pub subject_alt_names: Vec<String>,
     pub insecure: bool,
     pub include_loopback: bool,
 }
@@ -59,6 +60,7 @@ impl EndpointConfig {
             write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
             cert_path: None,
             key_path: None,
+            subject_alt_names: Vec::new(),
             insecure: false,
             include_loopback: false,
         }
@@ -78,6 +80,7 @@ impl EndpointConfig {
             write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
             cert_path: None,
             key_path: None,
+            subject_alt_names: Vec::new(),
             insecure: false,
             include_loopback: false,
         }
@@ -123,8 +126,30 @@ impl EndpointConfig {
         self
     }
 
+    pub fn with_cert_path_option(mut self, path_option: Option<PathBuf>) -> Self {
+        self.cert_path = path_option;
+        self
+    }
+
     pub fn with_key_path(mut self, path: PathBuf) -> Self {
         self.key_path = Some(path);
+        self
+    }
+
+    pub fn with_key_path_option(mut self, path_option: Option<PathBuf>) -> Self {
+        self.key_path = path_option;
+        self
+    }
+
+    pub fn with_subject_alt_names(mut self, names: Vec<String>) -> Self {
+        self.subject_alt_names = names;
+        self
+    }
+
+    pub fn with_subject_alt_name(mut self, name: String) -> Self {
+        if !self.subject_alt_names.contains(&name) {
+            self.subject_alt_names.push(name);
+        }
         self
     }
 
@@ -229,7 +254,7 @@ impl EndpointConfig {
     }
     pub fn tls_server_config(&self) -> Result<TlsServerConfig> {
         if self.insecure {
-            TlsServerConfigBuilder::new_insecure(vec!["localhost".into()])
+            TlsServerConfigBuilder::new_insecure(self.subject_alt_names.clone())
         } else {
             if self.cert_path.is_some() && self.key_path.is_some() {
                 TlsServerConfigBuilder::new_with_cert(&self.cert_path.as_ref().unwrap(), &self.key_path.as_ref().unwrap())

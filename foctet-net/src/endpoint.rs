@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::config::EndpointConfig;
@@ -8,6 +9,7 @@ use crate::connection::quic::QuicConnection;
 use crate::connection::quic::QuicSocket;
 use crate::connection::tcp::TcpSocket;
 use crate::connection::tcp::TlsTcpStream;
+use crate::connection::FoctetStream;
 use crate::connection::NetworkStream;
 use crate::relay::client::RelayClient;
 use anyhow::Result;
@@ -17,6 +19,18 @@ use foctet_core::node::NodeId;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+
+/// A listener for incoming network streams.
+pub struct Listener {
+    receiver: mpsc::Receiver<NetworkStream>,
+}
+
+impl Listener {
+    /// Accept a new (next) stream
+    pub async fn accept(&mut self) -> Option<NetworkStream> {
+        self.receiver.recv().await
+    }
+}
 
 /// Builder for [`Endpoint`].
 pub struct EndpointBuilder {
@@ -86,10 +100,51 @@ impl EndpointBuilder {
         self
     }
 
+    pub fn with_cert_path(mut self, cert_path: PathBuf) -> Self {
+        self.config = self.config.with_cert_path(cert_path);
+        self
+    }
+
+    pub fn with_cert_path_option(mut self, cert_path_option: Option<PathBuf>) -> Self {
+        self.config = self.config.with_cert_path_option(cert_path_option);
+        self
+    }
+
+    pub fn with_key_path(mut self, key_path: PathBuf) -> Self {
+        self.config = self.config.with_key_path(key_path);
+        self
+    }
+
+    pub fn with_key_path_option(mut self, key_path_option: Option<PathBuf>) -> Self {
+        self.config = self.config.with_key_path_option(key_path_option);
+        self
+    }
+
+    pub fn with_subject_alt_names(mut self, subject_alt_names: Vec<String>) -> Self {
+        self.config = self.config.with_subject_alt_names(subject_alt_names);
+        self
+    }
+
+    pub fn with_subject_alt_name(mut self, subject_alt_name: String) -> Self {
+        self.config = self.config.with_subject_alt_name(subject_alt_name);
+        self
+    }
+
+    pub fn with_insecure(mut self, insecure: bool) -> Self {
+        self.config = self.config.with_insecure(insecure);
+        self
+    }
+
+    pub fn with_include_loopback(mut self, include_loopback: bool) -> Self {
+        self.config = self.config.with_include_loopback(include_loopback);
+        self
+    }
+
     /// Build the `Endpoint`.
     ///
     /// This initializes the underlying `QuicSocket` and `TcpSocket` based on the provided configuration.
     pub async fn build(self) -> Result<Endpoint> {
+        tracing::info!("Building Endpoint...");
         let quic_socket = QuicSocket::new(self.node_addr.node_id.clone(), self.config.clone())?;
         let tcp_socket = TcpSocket::new(self.node_addr.node_id.clone(), self.config.clone())?;
         let relay_client = RelayClient::new(self.node_addr.clone(),self.config.clone())?;
@@ -135,7 +190,9 @@ impl Endpoint {
             TransportProtocol::Both => {
                 match self.connect_quic_direct(node_addr.clone()).await {
                     Ok(stream) => return Ok(stream),
-                    Err(_) => {}
+                    Err(e) => {
+                        tracing::error!("Failed to connect to the node directly: {:?}", e);
+                    }
                 }
                 self.connect_tcp_direct(node_addr).await
             }
@@ -154,8 +211,8 @@ impl Endpoint {
         }
 
         let mut conn = self.quic_socket.connect_node(node_addr).await?;
-        let stream = conn.open_stream().await?;
-        // Store the connection for reuse
+        let mut stream = conn.open_stream().await?;
+        stream.handshake(None).await?;
         connections.insert(node_id, conn);
 
         Ok(NetworkStream::Quic(stream))
@@ -186,7 +243,8 @@ impl Endpoint {
         Err(anyhow!("Failed to connect to the node"))
     }
     pub async fn connect_tcp_direct(&mut self, node_addr: NodeAddr) -> Result<NetworkStream> {
-        let stream = self.tcp_socket.connect_node(node_addr).await?;
+        let mut stream = self.tcp_socket.connect_node(node_addr).await?;
+        stream.handshake(None).await?;
         Ok(NetworkStream::Tcp(stream))
     }
     pub async fn connect_tcp_relay(&mut self, node_addr: NodeAddr) -> Result<NetworkStream> {
@@ -214,10 +272,11 @@ impl Endpoint {
         }
         Err(anyhow!("Failed to connect to the node"))
     }
-    pub async fn listen(&mut self, sender: mpsc::Sender<NetworkStream>) -> Result<()> {
+    /* async fn start_listen_task(&mut self, sender: mpsc::Sender<NetworkStream>) -> Result<()> {
         let (quic_conn_tx, mut quic_conn_rx) = mpsc::channel::<QuicConnection>(100);
         let mut quic_socket = self.quic_socket.clone();
         let quic_cancel_token = self.cancellation_token.clone();
+        tracing::info!("Starting QUIC listener...");
         tokio::spawn(async move {
             match quic_socket.listen(quic_conn_tx, quic_cancel_token).await {
                 Ok(_) => {
@@ -231,6 +290,7 @@ impl Endpoint {
         let (tcp_conn_tx, mut tcp_conn_rx) = mpsc::channel::<TlsTcpStream>(100);
         let mut tcp_socket = self.tcp_socket.clone();
         let tcp_cancel_token = self.cancellation_token.clone();
+        tracing::info!("Starting TCP listener...");
         tokio::spawn(async move {
             match tcp_socket.listen(tcp_conn_tx, tcp_cancel_token).await {
                 Ok(_) => {
@@ -272,8 +332,27 @@ impl Endpoint {
             }
         }
         Ok(())
+    } */
+    /// Start listening for incoming network streams. 
+    /// Returns a [`Listener`] that can be used to accept incoming streams.
+    pub async fn listen(&mut self) -> Result<Listener> {
+        let (sender, receiver) = mpsc::channel::<NetworkStream>(100);
+        let quic_socket = self.quic_socket.clone();
+        let tcp_socket = self.tcp_socket.clone();
+        let cancellation_token = self.cancellation_token.clone();
+        tokio::spawn(async move {
+            match start_listen_task(quic_socket, tcp_socket, cancellation_token, sender).await {
+                Ok(_) => {
+                    tracing::info!("Endpoint listener stopped.");
+                }
+                Err(e) => {
+                    tracing::error!("Error starting listener: {:?}", e);
+                }
+            }
+        });
+        //self.start_listen_task(sender).await?;
+        Ok(Listener { receiver })
     }
-
     /// Remove stale or unused QUIC connections from the connection pool.
     pub async fn prune_quic_connections(&self) {
         let mut connections = self.quic_connections.lock().await;
@@ -314,4 +393,66 @@ impl Endpoint {
         tracing::info!("Endpoint shut down completed.");
         Ok(())
     }
+}
+
+async fn start_listen_task(quic_socket: QuicSocket, tcp_socket: TcpSocket, cancellation_token: CancellationToken, sender: mpsc::Sender<NetworkStream>) -> Result<()> {
+    let (quic_conn_tx, mut quic_conn_rx) = mpsc::channel::<QuicConnection>(100);
+    let mut quic_socket = quic_socket;
+    let quic_cancel_token = cancellation_token.clone();
+    tracing::info!("Starting QUIC listener...");
+    tokio::spawn(async move {
+        match quic_socket.listen(quic_conn_tx, quic_cancel_token).await {
+            Ok(_) => {
+                tracing::info!("QUIC listener stopped.");
+            }
+            Err(e) => {
+                tracing::error!("Error listening: {:?}", e);
+            }
+        }
+    });
+    let (tcp_conn_tx, mut tcp_conn_rx) = mpsc::channel::<TlsTcpStream>(100);
+    let mut tcp_socket = tcp_socket;
+    let tcp_cancel_token = cancellation_token.clone();
+    tracing::info!("Starting TCP listener...");
+    tokio::spawn(async move {
+        match tcp_socket.listen(tcp_conn_tx, tcp_cancel_token).await {
+            Ok(_) => {
+                tracing::info!("TCP listener stopped.");
+            }
+            Err(e) => {
+                tracing::error!("Error listening: {:?}", e);
+            }
+        }
+    });
+    loop {
+        tokio::select! {
+            Some(mut conn) = quic_conn_rx.recv() => {
+                let sender = sender.clone();
+                tokio::spawn(async move {
+                    match conn.accept_stream().await {
+                        Ok(stream) => {
+                            let stream = NetworkStream::Quic(stream);
+                            if let Err(e) = sender.send(stream).await {
+                                tracing::error!("Error sending QUIC stream: {:?}", e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Error accepting stream: {:?}", e);
+                        }
+                    }
+                });
+            }
+            Some(conn) = tcp_conn_rx.recv() => {
+                let stream = NetworkStream::Tcp(conn);
+                if let Err(e) = sender.send(stream).await {
+                    tracing::error!("Error sending TCP connection: {:?}", e);
+                }
+            }
+            _ = cancellation_token.cancelled() => {
+                tracing::info!("Endpoint listener cancelled.");
+                break;
+            }
+        }
+    }
+    Ok(())
 }

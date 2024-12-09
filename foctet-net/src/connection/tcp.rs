@@ -2,10 +2,13 @@ use super::FoctetRecvStream;
 use super::FoctetSendStream;
 use super::FoctetStream;
 use crate::config::EndpointConfig;
+use crate::config::TransportProtocol;
 use anyhow::anyhow;
 use anyhow::Result;
 use foctet_core::error::StreamError;
+use foctet_core::frame::HandshakeData;
 use foctet_core::frame::OperationId;
+use foctet_core::frame::RelayHandshakeData;
 use foctet_core::frame::{Frame, FrameType, Payload, StreamId};
 use foctet_core::node::RelayAddr;
 use foctet_core::node::{SessionId, NodeAddr, NodeId};
@@ -19,6 +22,9 @@ use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use tokio::io::{ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncWrite};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 #[derive(Debug)]
 pub struct TlsTcpSendStream {
@@ -237,9 +243,44 @@ pub struct TlsTcpStream {
     pub session_id: SessionId,
     pub send_buffer_size: usize,
     pub receive_buffer_size: usize,
+    pub established: bool,
     pub is_closed: bool,
     pub next_operation_id: OperationId,
     pub remote_address: SocketAddr,
+}
+
+impl AsyncRead for TlsTcpStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for TlsTcpStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().stream).poll_shutdown(cx)
+    }
 }
 
 impl FoctetStream for TlsTcpStream {
@@ -251,6 +292,44 @@ impl FoctetStream for TlsTcpStream {
     }
     fn operation_id(&self) -> OperationId {
         self.next_operation_id
+    }
+    async fn handshake(&mut self, data: Option<Vec<u8>>) -> Result<()> {
+        // Send a handshake frame to the peer
+        let frame: Frame = Frame::builder()
+            .with_fin(true)
+            .with_frame_type(FrameType::Connect)
+            .with_operation_id(self.next_operation_id)
+            .with_payload(Payload::handshake(HandshakeData::new(self.node_id.clone(), data)))
+            .build();
+        self.send_frame(frame).await?;
+        // Receive a handshake frame from the peer
+        // Wait for the `Connected` frame from the peer
+        let frame = self.receive_frame().await?;
+        if frame.frame_type == FrameType::Connected {
+            self.established = true;
+            Ok(())
+        } else {
+            Err(anyhow!("Failed to establish connection"))
+        }
+    }
+    async fn handshake_relay(&mut self, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Result<()> {
+        // Send a handshake frame to the peer
+        let frame: Frame = Frame::builder()
+            .with_fin(true)
+            .with_frame_type(FrameType::Connect)
+            .with_operation_id(self.next_operation_id)
+            .with_payload(Payload::handshake_relay(RelayHandshakeData::new(self.node_id.clone(), dst_node_id, data)))
+            .build();
+        self.send_frame(frame).await?;
+        // Receive a handshake frame from the peer
+        // Wait for the `Connected` frame from the peer
+        let frame = self.receive_frame().await?;
+        if frame.frame_type == FrameType::Connected {
+            self.established = true;
+            Ok(())
+        } else {
+            Err(anyhow!("Failed to establish connection"))
+        }
     }
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
         let mut framed_writer: FramedWrite<&mut TlsStream<TcpStream>, LengthDelimitedCodec> =
@@ -402,12 +481,20 @@ impl FoctetStream for TlsTcpStream {
         Ok(())
     }
 
+    fn established(&self) -> bool {
+        self.established
+    }
+
     fn is_closed(&self) -> bool {
         self.is_closed
     }
 
     fn remote_address(&self) -> SocketAddr {
         self.remote_address
+    }
+
+    fn transport_protocol(&self) -> TransportProtocol {
+        TransportProtocol::Tcp
     }
 
     fn split(self) -> (super::SendStream, super::RecvStream) {
@@ -446,6 +533,7 @@ impl FoctetStream for TlsTcpStream {
                     session_id: tcp_send_stream.session_id,
                     send_buffer_size: tcp_send_stream.send_buffer_size,
                     receive_buffer_size: tcp_recv_stream.receive_buffer_size,
+                    established: true,
                     is_closed: tcp_send_stream.is_closed,
                     next_operation_id: tcp_send_stream.next_operation_id,
                     remote_address: tcp_send_stream.remote_address,
@@ -494,6 +582,7 @@ impl TcpSocket {
             session_id: SessionId::new(),
             send_buffer_size: self.config.write_buffer_size(),
             receive_buffer_size: self.config.read_buffer_size(),
+            established: false,
             is_closed: false,
             next_operation_id: OperationId(0),
             remote_address: remote_address,
@@ -503,7 +592,7 @@ impl TcpSocket {
 
     pub async fn listen(&mut self, sender: mpsc::Sender<TlsTcpStream>, cancel_token: CancellationToken) -> Result<()> {
         let listener = TcpListener::bind(self.config.server_addr).await?;
-        tracing::info!("Listening on {}", self.config.server_addr);
+        tracing::info!("Listening on {}/TCP", self.config.server_addr);
     
         loop {
             tokio::select! {
@@ -528,6 +617,7 @@ impl TcpSocket {
                                         session_id: SessionId::new(),
                                         send_buffer_size: self.config.write_buffer_size(),
                                         receive_buffer_size: self.config.read_buffer_size(),
+                                        established: false,
                                         is_closed: false,
                                         next_operation_id: OperationId(0),
                                         remote_address,

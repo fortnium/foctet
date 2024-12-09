@@ -7,14 +7,16 @@ use std::{
 
 /// The minimum size of the write(send) buffer, in bytes. (1KB)
 pub const MIN_WRITE_BUFFER_SIZE: usize = 1024;
-/// The default size of the write(send) buffer, in bytes. (8KB)
-pub const DEFAULT_WRITE_BUFFER_SIZE: usize = 8192;
+/// The default size of the write(send) buffer, in bytes. (16KB)
+//pub const DEFAULT_WRITE_BUFFER_SIZE: usize = 8192;
+pub const DEFAULT_WRITE_BUFFER_SIZE: usize = 16384;
 /// The maximum size of the write(send) buffer, in bytes. (64KB)
 pub const MAX_WRITE_BUFFER_SIZE: usize = 65536;
 /// The minimum size of the read(receive) buffer, in bytes. (1KB)
 pub const MIN_READ_BUFFER_SIZE: usize = 1024;
-/// The default size of the read(receive) buffer, in bytes. (8KB)
-pub const DEFAULT_READ_BUFFER_SIZE: usize = 8192;
+/// The default size of the read(receive) buffer, in bytes. (16KB)
+//pub const DEFAULT_READ_BUFFER_SIZE: usize = 8192;
+pub const DEFAULT_READ_BUFFER_SIZE: usize = 16384;
 /// The maximum size of the read(receive) buffer, in bytes. (64KB)
 pub const MAX_READ_BUFFER_SIZE: usize = 65536;
 

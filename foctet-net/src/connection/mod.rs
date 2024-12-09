@@ -14,6 +14,8 @@ use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc, time::In
 use tcp::{TlsTcpStream, TlsTcpSendStream, TlsTcpRecvStream};
 use tokio::sync::{Mutex, RwLock};
 
+use crate::config::TransportProtocol;
+
 /// Represents the type of connection used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionType {
@@ -273,6 +275,12 @@ pub trait FoctetStream {
     /// Returns the current operation ID.
     fn operation_id(&self) -> OperationId;
 
+    /// Handshake with the remote node
+    async fn handshake(&mut self, data: Option<Vec<u8>>) -> Result<()>;
+
+    /// Handshake with the relay server
+    async fn handshake_relay(&mut self, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Result<()>;
+
     /// Sends data over the stream
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId>;
 
@@ -294,11 +302,17 @@ pub trait FoctetStream {
     /// Gracefully closes the stream.
     async fn close(&mut self) -> Result<()>;
 
-    /// Returns the current state of the connection.
+    /// Returns the current state of the stream.
+    fn established(&self) -> bool;
+
+    /// Returns the current state of the stream.
     fn is_closed(&self) -> bool;
 
     /// Returns the remote address of the connection.
     fn remote_address(&self) -> SocketAddr;
+
+    /// Returns the transport protocol used by the connection.
+    fn transport_protocol(&self) -> TransportProtocol;
 
     /// Splits the stream into send and receive streams.
     fn split(self) -> (SendStream, RecvStream);
@@ -546,6 +560,20 @@ impl FoctetStream for NetworkStream {
         }
     }
 
+    async fn handshake(&mut self, data: Option<Vec<u8>>) -> Result<()> {
+        match self {
+            NetworkStream::Quic(stream) => stream.handshake(data).await,
+            NetworkStream::Tcp(stream) => stream.handshake(data).await,
+        }
+    }
+
+    async fn handshake_relay(&mut self, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Result<()> {
+        match self {
+            NetworkStream::Quic(stream) => stream.handshake_relay(dst_node_id, data).await,
+            NetworkStream::Tcp(stream) => stream.handshake_relay(dst_node_id, data).await,
+        }
+    }
+
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
         match self {
             NetworkStream::Quic(stream) => stream.send_data(data).await,
@@ -595,6 +623,13 @@ impl FoctetStream for NetworkStream {
         }
     }
 
+    fn established(&self) -> bool {
+        match self {
+            NetworkStream::Quic(stream) => stream.established(),
+            NetworkStream::Tcp(stream) => stream.established(),
+        }
+    }
+
     fn is_closed(&self) -> bool {
         match self {
             NetworkStream::Quic(stream) => stream.is_closed(),
@@ -606,6 +641,13 @@ impl FoctetStream for NetworkStream {
         match self {
             NetworkStream::Quic(stream) => stream.remote_address(),
             NetworkStream::Tcp(stream) => stream.remote_address(),
+        }
+    }
+
+    fn transport_protocol(&self) -> TransportProtocol {
+        match self {
+            NetworkStream::Quic(stream) => stream.transport_protocol(),
+            NetworkStream::Tcp(stream) => stream.transport_protocol(),
         }
     }
 
