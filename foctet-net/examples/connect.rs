@@ -91,6 +91,7 @@ async fn main() -> Result<()> {
             Some(line) = rx.recv() => {
                 if line.trim().eq_ignore_ascii_case("exit") {
                     tracing::info!("Exit signal received. Closing connection.");
+                    stream.close().await?;
                     break;
                 }
                 // Build and send a frame with the user's input
