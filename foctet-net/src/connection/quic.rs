@@ -729,7 +729,7 @@ impl QuicSocket {
             endpoint::make_client_config(config.tls_client_config().unwrap())?;
         let server_config: ServerConfig =
             endpoint::make_server_config(config.tls_server_config().unwrap())?;
-        let mut endpoint: Endpoint = Endpoint::server(server_config, config.server_addr)?;
+        let mut endpoint: Endpoint = Endpoint::server(server_config, config.server_addr())?;
         endpoint.set_default_client_config(client_config);
         Ok(Self {
             node_id: node_id,
@@ -774,7 +774,7 @@ impl QuicSocket {
         Ok(())
     } */
     pub async fn listen(&mut self, sender: mpsc::Sender<QuicConnection>, cancel_token: CancellationToken) -> Result<()> {
-        tracing::info!("Listening on {}/UDP(QUIC)", self.config.server_addr);
+        tracing::info!("Listening on {}/UDP(QUIC)", self.config.server_addr());
         loop {
             tokio::select! {
                 // Monitor the cancellation token

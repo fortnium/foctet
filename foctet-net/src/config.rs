@@ -1,12 +1,11 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::time::Duration;
 use std::path::PathBuf;
 use std::collections::BTreeSet;
 use anyhow::Result;
 use anyhow::anyhow;
 use foctet_core::default::{
-    DEFAULT_BIND_V4_ADDR, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_MAX_RETRIES, DEFAULT_RECEIVE_TIMEOUT,
-    DEFAULT_SERVER_V4_ADDR, DEFAULT_WRITE_BUFFER_SIZE,
+    DEFAULT_BIND_V4_ADDR, DEFAULT_BIND_V6_ADDR, DEFAULT_SERVER_V4_ADDR, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_MAX_RETRIES, DEFAULT_RECEIVE_TIMEOUT, DEFAULT_WRITE_BUFFER_SIZE
 };
 use foctet_core::default::{
     DEFAULT_READ_BUFFER_SIZE, DEFAULT_SEND_TIMEOUT, MAX_READ_BUFFER_SIZE, MAX_WRITE_BUFFER_SIZE,
@@ -30,7 +29,8 @@ pub enum TransportProtocol {
 #[derive(Debug, Clone)]
 pub struct EndpointConfig {
     pub bind_addr: SocketAddr,
-    pub server_addr: SocketAddr,
+    pub default_server_addr: SocketAddr,
+    pub server_addresses: BTreeSet<SocketAddr>,
     pub transport_protocol: TransportProtocol,
     pub connection_timeout: Duration,
     pub read_timeout: Duration,
@@ -50,7 +50,8 @@ impl EndpointConfig {
     pub fn new() -> Self {
         Self {
             bind_addr: DEFAULT_BIND_V4_ADDR,
-            server_addr: DEFAULT_SERVER_V4_ADDR,
+            default_server_addr: DEFAULT_SERVER_V4_ADDR,
+            server_addresses: BTreeSet::new(),
             transport_protocol: TransportProtocol::Both,
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             read_timeout: DEFAULT_RECEIVE_TIMEOUT,
@@ -67,10 +68,12 @@ impl EndpointConfig {
     }
     /// Create a new socket configuration with the default bind address.
     pub fn new_with_default_addr() -> Self {
-        let default_bind_addr = crate::device::get_default_bind_addr();
+        let default_bind_addr = device::get_default_bind_addr();
+        let default_server_addrs = device::get_default_server_addrs(false);
         Self {
             bind_addr: default_bind_addr,
-            server_addr: DEFAULT_SERVER_V4_ADDR,
+            default_server_addr: DEFAULT_SERVER_V4_ADDR,
+            server_addresses: default_server_addrs,
             transport_protocol: TransportProtocol::Both,
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             read_timeout: DEFAULT_RECEIVE_TIMEOUT,
@@ -92,7 +95,24 @@ impl EndpointConfig {
     }
 
     pub fn with_server_addr(mut self, addr: SocketAddr) -> Self {
-        self.server_addr = addr;
+        self.default_server_addr = addr;
+        if addr == DEFAULT_BIND_V4_ADDR {
+            self.server_addresses = device::get_default_ipv4_server_addrs(self.include_loopback);
+        } else if addr == DEFAULT_BIND_V6_ADDR {
+            self.server_addresses = device::get_default_server_addrs(self.include_loopback);
+        } else {
+            self.server_addresses.insert(addr);
+        }
+        self
+    }
+
+    pub fn with_default_v4_server_addr(mut self) -> Self {
+        self.server_addresses = device::get_default_ipv4_server_addrs(self.include_loopback);
+        self
+    }
+
+    pub fn with_default_v6_server_addr(mut self) -> Self {
+        self.server_addresses = device::get_default_server_addrs(self.include_loopback);
         self
     }
 
@@ -220,30 +240,13 @@ impl EndpointConfig {
     pub fn read_buffer_size(&self) -> usize {
         self.read_buffer_size
     }
-    /// Returns the server addresses.
-    /// If the server address is unspecified, it returns the default server addresses.
-    /// Otherwise, it returns the server address.
-    /// If the server address is IPv4 unspecified, it returns the default IPv4 server addresses.
-    /// If the server address is IPv6 unspecified, it returns the default server addresses, both IPv4 and IPv6 for dual-stack.
+    /// Retunrs the default server address.
+    pub fn server_addr(&self) -> SocketAddr {
+        self.default_server_addr
+    }
+    /// Returns server addresses.
     pub fn server_addresses(&self) -> BTreeSet<SocketAddr> {
-        let mut addrs = BTreeSet::new();
-        match self.server_addr.ip() {
-            IpAddr::V4(ipv4addr) => {
-                if ipv4addr.is_unspecified() {
-                    addrs = device::get_default_ipv4_server_addrs(self.include_loopback);
-                } else {
-                    addrs.insert(self.server_addr);
-                }
-            },
-            IpAddr::V6(ipv6addr) => {
-                if ipv6addr.is_unspecified() {
-                    addrs = device::get_default_server_addrs(self.include_loopback);
-                } else {
-                    addrs.insert(self.server_addr);
-                }
-            },
-        }
-        addrs
+        self.server_addresses.clone()
     }
     pub fn tls_client_config(&self) -> Result<TlsClientConfig> {
         if self.insecure {

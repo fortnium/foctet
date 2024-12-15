@@ -591,8 +591,8 @@ impl TcpSocket {
     }
 
     pub async fn listen(&mut self, sender: mpsc::Sender<TlsTcpStream>, cancel_token: CancellationToken) -> Result<()> {
-        let listener = TcpListener::bind(self.config.server_addr).await?;
-        tracing::info!("Listening on {}/TCP", self.config.server_addr);
+        let listener = TcpListener::bind(self.config.server_addr()).await?;
+        tracing::info!("Listening on {}/TCP", self.config.server_addr());
     
         loop {
             tokio::select! {

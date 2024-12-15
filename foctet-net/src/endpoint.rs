@@ -272,67 +272,6 @@ impl Endpoint {
         }
         Err(anyhow!("Failed to connect to the node"))
     }
-    /* async fn start_listen_task(&mut self, sender: mpsc::Sender<NetworkStream>) -> Result<()> {
-        let (quic_conn_tx, mut quic_conn_rx) = mpsc::channel::<QuicConnection>(100);
-        let mut quic_socket = self.quic_socket.clone();
-        let quic_cancel_token = self.cancellation_token.clone();
-        tracing::info!("Starting QUIC listener...");
-        tokio::spawn(async move {
-            match quic_socket.listen(quic_conn_tx, quic_cancel_token).await {
-                Ok(_) => {
-                    tracing::info!("QUIC listener stopped.");
-                }
-                Err(e) => {
-                    tracing::error!("Error listening: {:?}", e);
-                }
-            }
-        });
-        let (tcp_conn_tx, mut tcp_conn_rx) = mpsc::channel::<TlsTcpStream>(100);
-        let mut tcp_socket = self.tcp_socket.clone();
-        let tcp_cancel_token = self.cancellation_token.clone();
-        tracing::info!("Starting TCP listener...");
-        tokio::spawn(async move {
-            match tcp_socket.listen(tcp_conn_tx, tcp_cancel_token).await {
-                Ok(_) => {
-                    tracing::info!("TCP listener stopped.");
-                }
-                Err(e) => {
-                    tracing::error!("Error listening: {:?}", e);
-                }
-            }
-        });
-        loop {
-            tokio::select! {
-                Some(mut conn) = quic_conn_rx.recv() => {
-                    let sender = sender.clone();
-                    tokio::spawn(async move {
-                        match conn.accept_stream().await {
-                            Ok(stream) => {
-                                let stream = NetworkStream::Quic(stream);
-                                if let Err(e) = sender.send(stream).await {
-                                    tracing::error!("Error sending QUIC stream: {:?}", e);
-                                }
-                            }
-                            Err(e) => {
-                                tracing::error!("Error accepting stream: {:?}", e);
-                            }
-                        }
-                    });
-                }
-                Some(conn) = tcp_conn_rx.recv() => {
-                    let stream = NetworkStream::Tcp(conn);
-                    if let Err(e) = sender.send(stream).await {
-                        tracing::error!("Error sending TCP connection: {:?}", e);
-                    }
-                }
-                _ = self.cancellation_token.cancelled() => {
-                    tracing::info!("Endpoint listener cancelled.");
-                    break;
-                }
-            }
-        }
-        Ok(())
-    } */
     /// Start listening for incoming network streams. 
     /// Returns a [`Listener`] that can be used to accept incoming streams.
     pub async fn listen(&mut self) -> Result<Listener> {
