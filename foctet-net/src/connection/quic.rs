@@ -59,7 +59,7 @@ impl FoctetSendStream for QuicSendStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message.into()).await?;
+            framed_writer.send(serialized_message).await?;
 
             offset = end;
         }
@@ -73,7 +73,7 @@ impl FoctetSendStream for QuicSendStream {
         let mut framed_writer =
             FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message.into()).await?;
+        framed_writer.send(serialized_message).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
@@ -100,7 +100,7 @@ impl FoctetSendStream for QuicSendStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message.into()).await?;
+            framed_writer.send(serialized_message).await?;
         }
 
         // Send the last frame with the FIN flag and NO payload
@@ -110,7 +110,7 @@ impl FoctetSendStream for QuicSendStream {
             .with_operation_id(self.next_operation_id)
             .build();
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message.into()).await?;
+        framed_writer.send(serialized_message).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
@@ -376,7 +376,7 @@ impl FoctetStream for QuicStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message.into()).await?;
+            framed_writer.send(serialized_message).await?;
 
             offset = end;
         }
@@ -431,7 +431,7 @@ impl FoctetStream for QuicStream {
         let mut framed_writer =
             FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message.into()).await?;
+        framed_writer.send(serialized_message).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
@@ -492,7 +492,7 @@ impl FoctetStream for QuicStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message.into()).await?;
+            framed_writer.send(serialized_message).await?;
         }
 
         // Send the last frame with the FIN flag and NO payload
@@ -502,7 +502,7 @@ impl FoctetStream for QuicStream {
             .with_operation_id(self.next_operation_id)
             .build();
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message.into()).await?;
+        framed_writer.send(serialized_message).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;

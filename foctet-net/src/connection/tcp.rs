@@ -64,7 +64,7 @@ impl FoctetSendStream for TlsTcpSendStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message.into()).await?;
+            framed_writer.send(serialized_message).await?;
 
             offset = end;
         }
@@ -77,7 +77,7 @@ impl FoctetSendStream for TlsTcpSendStream {
     async fn send_frame(&mut self, frame: Frame) -> Result<OperationId> {
         let mut framed_writer = FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message.into()).await?;
+        framed_writer.send(serialized_message).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
@@ -103,7 +103,7 @@ impl FoctetSendStream for TlsTcpSendStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message.into()).await?;
+            framed_writer.send(serialized_message).await?;
         }
 
         // Send the last frame with the FIN flag and NO payload
@@ -113,7 +113,7 @@ impl FoctetSendStream for TlsTcpSendStream {
             .with_operation_id(self.next_operation_id)
             .build();
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message.into()).await?;
+        framed_writer.send(serialized_message).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
@@ -347,7 +347,7 @@ impl FoctetStream for TlsTcpStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message.into()).await?;
+            framed_writer.send(serialized_message).await?;
 
             offset = end;
         }
@@ -385,7 +385,7 @@ impl FoctetStream for TlsTcpStream {
     async fn send_frame(&mut self, frame: Frame) -> Result<OperationId> {
         let mut framed_writer = FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message.into()).await?;
+        framed_writer.send(serialized_message).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
@@ -429,7 +429,7 @@ impl FoctetStream for TlsTcpStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message.into()).await?;
+            framed_writer.send(serialized_message).await?;
         }
 
         // Send the last frame with the FIN flag and NO payload
@@ -439,7 +439,7 @@ impl FoctetStream for TlsTcpStream {
             .with_operation_id(self.next_operation_id)
             .build();
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message.into()).await?;
+        framed_writer.send(serialized_message).await?;
 
         framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;

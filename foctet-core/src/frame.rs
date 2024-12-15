@@ -51,12 +51,20 @@ impl Frame {
         FrameBuilder::new()
     }
     /// Convert the frame to a byte array
-    pub fn to_bytes(&self) -> Result<Vec<u8>, bincode::Error> {
+    pub fn to_byte_array(&self) -> Result<Vec<u8>, bincode::Error> {
         bincode::serialize(self)
     }
     /// Convert a byte array to a frame
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::Error> {
+    pub fn from_byte_array(bytes: &[u8]) -> Result<Self, bincode::Error> {
         bincode::deserialize(bytes)
+    }
+    /// Convert the frame to `Bytes`
+    pub fn to_bytes(&self) -> Result<bytes::Bytes, bincode::Error> {
+        bincode::serialize(self).map(|bytes| bytes::Bytes::from(bytes))
+    }
+    /// Convert `Bytes` to a frame
+    pub fn from_bytes(bytes: &bytes::BytesMut) -> Result<Self, bincode::Error> {
+        bincode::deserialize(bytes.as_ref())
     }
     /// Get legnth of the frame
     pub fn len(&self) -> usize {
