@@ -54,6 +54,9 @@ pub const DEFAULT_SERVER_V6_ADDR: SocketAddr =
 pub const DEFAULT_RELAY_SERVER_HOST_ADDR: &str = "relay.foctet.net";
 pub const DEFAULT_RELAY_SERVER_PORT: u16 = 4433;
 
+pub const DEFAULT_RELAY_PACKET_QUEUE_CAPACITY: usize = 1024;
+pub const DEFAULT_RELAY_SERVER_CHANNEL_CAPACITY: usize = 1024;
+
 // The foctet user configuration directory structure
 /*
 $HOME/.foctet/

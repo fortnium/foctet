@@ -5,6 +5,7 @@ pub mod filter;
 pub mod priority;
 
 use anyhow::Result;
+use bytes::{Bytes, BytesMut};
 use foctet_core::{
     frame::{Frame, OperationId, StreamId},
     node::{SessionId, NodeAddr, NodeId},
@@ -280,6 +281,12 @@ pub trait FoctetStream {
 
     /// Handshake with the relay server
     async fn handshake_relay(&mut self, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Result<()>;
+
+    /// Sends bytes over the stream
+    async fn send_bytes(&mut self, bytes: Bytes) -> Result<usize>;
+
+    /// Receives bytes from the stream
+    async fn receive_bytes(&mut self) -> Result<BytesMut>;
 
     /// Sends data over the stream
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId>;
@@ -571,6 +578,20 @@ impl FoctetStream for NetworkStream {
         match self {
             NetworkStream::Quic(stream) => stream.handshake_relay(dst_node_id, data).await,
             NetworkStream::Tcp(stream) => stream.handshake_relay(dst_node_id, data).await,
+        }
+    }
+
+    async fn send_bytes(&mut self, bytes: Bytes) -> Result<usize> {
+        match self {
+            NetworkStream::Quic(stream) => stream.send_bytes(bytes).await,
+            NetworkStream::Tcp(stream) => stream.send_bytes(bytes).await,
+        }
+    }
+
+    async fn receive_bytes(&mut self) -> Result<BytesMut> {
+        match self {
+            NetworkStream::Quic(stream) => stream.receive_bytes().await,
+            NetworkStream::Tcp(stream) => stream.receive_bytes().await,
         }
     }
 

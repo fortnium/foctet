@@ -8,6 +8,32 @@ use std::{collections::BTreeSet, net::SocketAddr};
 /// This is the ED25519 public key of the node, with length 32 bytes.
 pub type NodeId = NodePublicKey;
 
+/// Sequencial connection ID for a node.
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ConnectionId(pub u64);
+
+impl ConnectionId {
+    /// Create a new connection ID
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
+    /// Get the connection ID as a string
+    pub fn as_str(&self) -> String {
+        self.0.to_string()
+    }
+    /// Increment the connection ID by one
+    pub fn increment(&mut self) {
+        self.0 += 1;
+    }
+    /// Decrement the connection ID by one
+    /// If the connection ID is zero, it will remain zero.
+    pub fn decrement(&mut self) {
+        if self.0 > 0 {
+            self.0 -= 1;
+        }
+    }
+}
+
 /// Represents a node address. Network address information for a node.
 /// Contains identifiers and addresses for direct connections and relay servers.
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash)]

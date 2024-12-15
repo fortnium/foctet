@@ -360,6 +360,29 @@ impl FoctetStream for QuicStream {
             Err(anyhow!("Failed to establish connection"))
         }
     }
+    async fn send_bytes(&mut self, bytes: bytes::Bytes) -> Result<usize> {
+        let len = bytes.len();
+        let mut framed_writer =
+            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
+        framed_writer.send(bytes).await?;
+        framed_writer.flush().await?;
+        Ok(len)
+    }
+    async fn receive_bytes(&mut self) -> Result<bytes::BytesMut> {
+        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
+        let bytes = framed_reader.next().await;
+        match bytes {
+            Some(Ok(bytes)) => {
+                Ok(bytes)
+            }
+            Some(Err(e)) => {
+                Err(e.into())
+            }
+            None => {
+                Err(StreamError::Closed.into())
+            }
+        }
+    }
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
         let mut framed_writer =
             FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());

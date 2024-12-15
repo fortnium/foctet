@@ -160,6 +160,22 @@ impl EndpointBuilder {
     }
 }
 
+#[derive(Debug)]
+pub struct EndpointHandle {
+    cancel: CancellationToken,
+}
+
+impl EndpointHandle {
+    pub fn new(cancel: CancellationToken) -> Self {
+        Self {
+            cancel,
+        }
+    }
+    pub async fn shutdown(&self) {
+        self.cancel.cancel();
+    }
+}
+
 /// The endpoint for the node.
 pub struct Endpoint {
     /// The node address for the endpoint.
@@ -182,6 +198,9 @@ impl Endpoint {
     /// Create a new `EndpointBuilder` for constructing an `Endpoint`.
     pub fn builder() -> EndpointBuilder {
         EndpointBuilder::new()
+    }
+    pub fn handle(&self) -> EndpointHandle {
+        EndpointHandle::new(self.cancellation_token.clone())
     }
     pub async fn connect(&mut self, node_addr: NodeAddr) -> Result<NetworkStream> {
         match self.config.transport_protocol {

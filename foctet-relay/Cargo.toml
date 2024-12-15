@@ -7,3 +7,13 @@ description = "Relay server for the Foctet protocol, designed to handle NAT trav
 
 [dependencies]
 foctet = { path = "../foctet" }
+anyhow = { version = "1" }
+serde = { version = "1.0", features = ["derive"] }
+bytes = "1"
+futures = "0.3"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "fs", "macros", "sync", "signal"] }
+tokio-stream = "0.1"
+tokio-util = {version = "0.7.12", features = ["codec", "rt"] }
+tracing = "0.1"
+tracing-subscriber = "0.3.0"
+clap = { version = "4.5", features = ["derive", "string"] }
