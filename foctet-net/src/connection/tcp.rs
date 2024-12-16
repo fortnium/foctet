@@ -28,7 +28,7 @@ use std::task::{Context, Poll};
 
 #[derive(Debug)]
 pub struct TlsTcpSendStream {
-    pub send_stream: WriteHalf<TlsStream<TcpStream>>,
+    pub framed_writer: FramedWrite<WriteHalf<TlsStream<TcpStream>>, LengthDelimitedCodec>,
     pub node_id: NodeId,
     pub stream_id: StreamId,
     pub session_id: SessionId,
@@ -49,8 +49,6 @@ impl FoctetSendStream for TlsTcpSendStream {
         self.next_operation_id
     }
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
-        let mut framed_writer: FramedWrite<&mut WriteHalf<TlsStream<TcpStream>>, LengthDelimitedCodec> =
-            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let mut offset = 0;
         while offset < data.len() {
             let end = std::cmp::min(offset + self.send_buffer_size, data.len());
@@ -64,29 +62,27 @@ impl FoctetSendStream for TlsTcpSendStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message).await?;
+            self.framed_writer.send(serialized_message).await?;
 
             offset = end;
         }
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
         Ok(operation_id)
     }
     async fn send_frame(&mut self, frame: Frame) -> Result<OperationId> {
-        let mut framed_writer = FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message).await?;
+        self.framed_writer.send(serialized_message).await?;
 
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
         Ok(operation_id)
     }
     async fn send_file(&mut self, file_path: &std::path::Path) -> Result<OperationId> {
-        let mut framed_writer = FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let mut file = tokio::fs::File::open(file_path).await?;
         let mut buffer = vec![0u8; self.send_buffer_size];
 
@@ -103,7 +99,7 @@ impl FoctetSendStream for TlsTcpSendStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message).await?;
+            self.framed_writer.send(serialized_message).await?;
         }
 
         // Send the last frame with the FIN flag and NO payload
@@ -113,17 +109,18 @@ impl FoctetSendStream for TlsTcpSendStream {
             .with_operation_id(self.next_operation_id)
             .build();
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message).await?;
+        self.framed_writer.send(serialized_message).await?;
 
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
         Ok(operation_id)
     }
     async fn close(&mut self) -> Result<()> {
-        self.send_stream.shutdown().await?;
-        //self.stream.get_mut().0.shutdown().await?;
+        self.framed_writer.flush().await?;
+        self.framed_writer.get_mut().shutdown().await?;
+        self.framed_writer.close().await?;
         self.is_closed = true;
         Ok(())
     }
@@ -139,7 +136,7 @@ impl FoctetSendStream for TlsTcpSendStream {
 
 #[derive(Debug)]
 pub struct TlsTcpRecvStream {
-    pub recv_stream: ReadHalf<TlsStream<TcpStream>>,
+    pub framed_reader: FramedRead<ReadHalf<TlsStream<TcpStream>>, LengthDelimitedCodec>,
     pub node_id: NodeId,
     pub stream_id: StreamId,
     pub session_id: SessionId,
@@ -156,9 +153,8 @@ impl FoctetRecvStream for TlsTcpRecvStream {
         self.stream_id
     }
     async fn receive_data(&mut self, buffer: &mut Vec<u8>) -> Result<usize> {
-        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
         let mut total_bytes_read: usize = 0;
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -179,8 +175,7 @@ impl FoctetRecvStream for TlsTcpRecvStream {
         Ok(total_bytes_read)
     }
     async fn receive_frame(&mut self) -> Result<Frame> {
-        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -196,9 +191,8 @@ impl FoctetRecvStream for TlsTcpRecvStream {
     }
     async fn receive_file(&mut self, file_path: &std::path::Path) -> Result<u64> {
         let mut total_bytes: u64 = 0;
-        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
         let mut file = tokio::fs::File::create(file_path).await?;
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -237,7 +231,8 @@ impl FoctetRecvStream for TlsTcpRecvStream {
 
 #[derive(Debug)]
 pub struct TlsTcpStream {
-    pub stream: TlsStream<TcpStream>,
+    pub framed_writer: FramedWrite<WriteHalf<TlsStream<TcpStream>>, LengthDelimitedCodec>,
+    pub framed_reader: FramedRead<ReadHalf<TlsStream<TcpStream>>, LengthDelimitedCodec>,
     pub node_id: NodeId,
     pub stream_id: StreamId,
     pub session_id: SessionId,
@@ -255,7 +250,7 @@ impl AsyncRead for TlsTcpStream {
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_read(cx, buf)
+        Pin::new(&mut self.get_mut().framed_reader.get_mut()).poll_read(cx, buf)
     }
 }
 
@@ -265,21 +260,21 @@ impl AsyncWrite for TlsTcpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().stream).poll_write(cx, buf)
+        Pin::new(&mut self.get_mut().framed_writer.get_mut()).poll_write(cx, buf)
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+        Pin::new(&mut self.get_mut().framed_writer.get_mut()).poll_flush(cx)
     }
 
     fn poll_shutdown(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_shutdown(cx)
+        Pin::new(&mut self.get_mut().framed_writer.get_mut()).poll_shutdown(cx)
     }
 }
 
@@ -333,15 +328,12 @@ impl FoctetStream for TlsTcpStream {
     }
     async fn send_bytes(&mut self, bytes: bytes::Bytes) -> Result<usize> {
         let len = bytes.len();
-        let mut framed_writer =
-            FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
-        framed_writer.send(bytes).await?;
-        framed_writer.flush().await?;
+        self.framed_writer.send(bytes).await?;
+        self.framed_writer.flush().await?;
         Ok(len)
     }
     async fn receive_bytes(&mut self) -> Result<bytes::BytesMut> {
-        let mut framed_reader = FramedRead::new(&mut self.stream, LengthDelimitedCodec::new());
-        let bytes = framed_reader.next().await;
+        let bytes = self.framed_reader.next().await;
         match bytes {
             Some(Ok(bytes)) => {
                 Ok(bytes)
@@ -355,8 +347,6 @@ impl FoctetStream for TlsTcpStream {
         }
     }
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
-        let mut framed_writer: FramedWrite<&mut TlsStream<TcpStream>, LengthDelimitedCodec> =
-            FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let mut offset = 0;
         while offset < data.len() {
             let end = std::cmp::min(offset + self.send_buffer_size, data.len());
@@ -370,11 +360,11 @@ impl FoctetStream for TlsTcpStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message).await?;
+            self.framed_writer.send(serialized_message).await?;
 
             offset = end;
         }
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
@@ -382,9 +372,8 @@ impl FoctetStream for TlsTcpStream {
     }
 
     async fn receive_data(&mut self, buffer: &mut Vec<u8>) -> Result<usize> {
-        let mut framed_reader = FramedRead::new(&mut self.stream, LengthDelimitedCodec::new());
         let mut total_bytes_read: usize = 0;
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -406,11 +395,10 @@ impl FoctetStream for TlsTcpStream {
     }
 
     async fn send_frame(&mut self, frame: Frame) -> Result<OperationId> {
-        let mut framed_writer = FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message).await?;
+        self.framed_writer.send(serialized_message).await?;
 
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
@@ -418,8 +406,7 @@ impl FoctetStream for TlsTcpStream {
     }
 
     async fn receive_frame(&mut self) -> Result<Frame> {
-        let mut framed_reader = FramedRead::new(&mut self.stream, LengthDelimitedCodec::new());
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -435,7 +422,6 @@ impl FoctetStream for TlsTcpStream {
     }
 
     async fn send_file(&mut self, file_path: &std::path::Path) -> Result<OperationId> {
-        let mut framed_writer = FramedWrite::new(&mut self.stream, LengthDelimitedCodec::new());
         let mut file = tokio::fs::File::open(file_path).await?;
         let mut buffer = vec![0u8; self.send_buffer_size];
 
@@ -452,7 +438,7 @@ impl FoctetStream for TlsTcpStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message).await?;
+            self.framed_writer.send(serialized_message).await?;
         }
 
         // Send the last frame with the FIN flag and NO payload
@@ -462,9 +448,9 @@ impl FoctetStream for TlsTcpStream {
             .with_operation_id(self.next_operation_id)
             .build();
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message).await?;
+        self.framed_writer.send(serialized_message).await?;
 
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().shutdown().await?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
@@ -473,9 +459,8 @@ impl FoctetStream for TlsTcpStream {
 
     async fn receive_file(&mut self, file_path: &std::path::Path) -> Result<u64> {
         let mut total_bytes: u64 = 0;
-        let mut framed_reader = FramedRead::new(&mut self.stream, LengthDelimitedCodec::new());
         let mut file = tokio::fs::File::create(file_path).await?;
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -498,8 +483,8 @@ impl FoctetStream for TlsTcpStream {
     }
 
     async fn close(&mut self) -> Result<()> {
-        self.stream.shutdown().await?;
-        //self.stream.get_mut().0.shutdown().await?;
+        self.framed_writer.flush().await?;
+        self.framed_writer.get_mut().shutdown().await?;
         self.is_closed = true;
         Ok(())
     }
@@ -521,9 +506,8 @@ impl FoctetStream for TlsTcpStream {
     }
 
     fn split(self) -> (super::SendStream, super::RecvStream) {
-        let (read_half, write_half) = tokio::io::split(self.stream);
         let tcp_send_stream = TlsTcpSendStream {
-            send_stream: write_half,
+            framed_writer: self.framed_writer,
             node_id: self.node_id.clone(),
             stream_id: self.stream_id,
             session_id: self.session_id.clone(),
@@ -533,7 +517,7 @@ impl FoctetStream for TlsTcpStream {
             remote_address: self.remote_address,
         };
         let tcp_recv_stream = TlsTcpRecvStream {
-            recv_stream: read_half,
+            framed_reader: self.framed_reader,
             node_id: self.node_id.clone(),
             stream_id: self.stream_id,
             session_id: self.session_id,
@@ -548,9 +532,9 @@ impl FoctetStream for TlsTcpStream {
     fn merge(send_stream: super::SendStream, recv_stream: super::RecvStream) -> Result<Self> where Self: Sized {
         match (send_stream, recv_stream) {
             (super::SendStream::Tcp(tcp_send_stream), super::RecvStream::Tcp(tcp_recv_stream)) => {
-                let stream: TlsStream<TcpStream> = tcp_recv_stream.recv_stream.unsplit(tcp_send_stream.send_stream);
                 Ok(Self {
-                    stream: stream,
+                    framed_writer: tcp_send_stream.framed_writer,
+                    framed_reader: tcp_recv_stream.framed_reader,
                     node_id: tcp_send_stream.node_id,
                     stream_id: tcp_send_stream.stream_id,
                     session_id: tcp_send_stream.session_id,
@@ -598,8 +582,12 @@ impl TcpSocket {
         let stream = TcpStream::connect(server_addr).await?;
         let remote_address = stream.peer_addr()?;
         let tls_stream = self.tls_connector.connect(name, stream).await?;
+        let (read_half, write_half) = tokio::io::split(TlsStream::Client(tls_stream));
+        let framed_writer = FramedWrite::new(write_half, LengthDelimitedCodec::new());
+        let framed_reader = FramedRead::new(read_half, LengthDelimitedCodec::new());
         let tls_tcp_stream = TlsTcpStream {
-            stream: TlsStream::Client(tls_stream),
+            framed_writer: framed_writer,
+            framed_reader: framed_reader,
             node_id: self.node_id.clone(),
             stream_id: StreamId::new(0),
             session_id: SessionId::new(),
@@ -633,8 +621,12 @@ impl TcpSocket {
                             tracing::info!("Accepted connection from {}", addr);
                             match self.tls_acceptor.accept(stream).await {
                                 Ok(tls_stream) => {
+                                    let (read_half, write_half) = tokio::io::split(TlsStream::Server(tls_stream));
+                                    let framed_writer = FramedWrite::new(write_half, LengthDelimitedCodec::new());
+                                    let framed_reader = FramedRead::new(read_half, LengthDelimitedCodec::new());
                                     let tls_tcp_stream = TlsTcpStream {
-                                        stream: TlsStream::Server(tls_stream),
+                                        framed_writer: framed_writer,
+                                        framed_reader: framed_reader,
                                         node_id: self.node_id.clone(),
                                         stream_id: StreamId::new(0),
                                         session_id: SessionId::new(),

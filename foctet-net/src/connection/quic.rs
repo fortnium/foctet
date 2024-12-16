@@ -23,7 +23,7 @@ use std::task::{Context, Poll};
 
 #[derive(Debug)]
 pub struct QuicSendStream {
-    pub send_stream: SendStream,
+    pub framed_writer: FramedWrite<SendStream, LengthDelimitedCodec>,
     pub node_id: NodeId,
     pub stream_id: StreamId,
     pub session_id: SessionId,
@@ -44,8 +44,6 @@ impl FoctetSendStream for QuicSendStream {
         self.next_operation_id
     }
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
-        let mut framed_writer =
-            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let mut offset = 0;
         while offset < data.len() {
             let end = std::cmp::min(offset + self.send_buffer_size, data.len());
@@ -59,31 +57,27 @@ impl FoctetSendStream for QuicSendStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message).await?;
+            self.framed_writer.send(serialized_message).await?;
 
             offset = end;
         }
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
         Ok(operation_id)
     }
     async fn send_frame(&mut self, frame: Frame) -> Result<OperationId> {
-        let mut framed_writer =
-            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message).await?;
+        self.framed_writer.send(serialized_message).await?;
 
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
         Ok(operation_id)
     }
     async fn send_file(&mut self, file_path: &std::path::Path) -> Result<OperationId> {
-        let mut framed_writer =
-            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let mut file = tokio::fs::File::open(file_path).await?;
         let mut buffer = vec![0u8; self.send_buffer_size];
 
@@ -100,7 +94,7 @@ impl FoctetSendStream for QuicSendStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message).await?;
+            self.framed_writer.send(serialized_message).await?;
         }
 
         // Send the last frame with the FIN flag and NO payload
@@ -110,9 +104,9 @@ impl FoctetSendStream for QuicSendStream {
             .with_operation_id(self.next_operation_id)
             .build();
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message).await?;
+        self.framed_writer.send(serialized_message).await?;
 
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
@@ -120,7 +114,8 @@ impl FoctetSendStream for QuicSendStream {
     }
 
     async fn close(&mut self) -> Result<()> {
-        self.send_stream.finish()?;
+        self.framed_writer.get_mut().finish()?;
+        self.framed_writer.close().await?;
         self.is_closed = true;
         Ok(())
     }
@@ -136,7 +131,7 @@ impl FoctetSendStream for QuicSendStream {
 
 #[derive(Debug)]
 pub struct QuicRecvStream {
-    pub recv_stream: RecvStream,
+    pub framed_reader: FramedRead<RecvStream, LengthDelimitedCodec>,
     pub node_id: NodeId,
     pub stream_id: StreamId,
     pub session_id: SessionId,
@@ -153,9 +148,8 @@ impl FoctetRecvStream for QuicRecvStream {
         self.stream_id
     }
     async fn receive_data(&mut self, buffer: &mut Vec<u8>) -> Result<usize> {
-        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
         let mut total_bytes_read: usize = 0;
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -192,8 +186,7 @@ impl FoctetRecvStream for QuicRecvStream {
         Ok(total_bytes_read)
     }
     async fn receive_frame(&mut self) -> Result<Frame> {
-        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -225,9 +218,8 @@ impl FoctetRecvStream for QuicRecvStream {
     }
     async fn receive_file(&mut self, file_path: &std::path::Path) -> Result<u64> {
         let mut total_bytes: u64 = 0;
-        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
         let mut file = tokio::fs::File::create(file_path).await?;
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -249,7 +241,7 @@ impl FoctetRecvStream for QuicRecvStream {
         Ok(total_bytes)
     }
     async fn close(&mut self) -> Result<()> {
-        self.recv_stream.stop(VarInt::from_u32(0))?;
+        self.framed_reader.get_mut().stop(VarInt::from_u32(0))?;
         self.is_closed = true;
         Ok(())
     }
@@ -265,8 +257,8 @@ impl FoctetRecvStream for QuicRecvStream {
 
 #[derive(Debug)]
 pub struct QuicStream {
-    pub send_stream: SendStream,
-    pub recv_stream: RecvStream,
+    pub framed_writer: FramedWrite<SendStream, LengthDelimitedCodec>,
+    pub framed_reader: FramedRead<RecvStream, LengthDelimitedCodec>,
     pub node_id: NodeId,
     pub stream_id: StreamId,
     pub session_id: SessionId,
@@ -284,7 +276,7 @@ impl AsyncRead for QuicStream {
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().recv_stream).poll_read(cx, buf)
+        Pin::new(&mut self.get_mut().framed_reader.get_mut()).poll_read(cx, buf)
     }
 }
 
@@ -294,21 +286,21 @@ impl AsyncWrite for QuicStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().send_stream).poll_write(cx, buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        Pin::new(&mut self.get_mut().framed_writer.get_mut()).poll_write(cx, buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().send_stream).poll_flush(cx)
+        Pin::new(&mut self.get_mut().framed_writer.get_mut()).poll_flush(cx)
     }
 
     fn poll_shutdown(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().send_stream).poll_shutdown(cx)
+        Pin::new(&mut self.get_mut().framed_writer.get_mut()).poll_shutdown(cx)
     }
 }
 
@@ -362,15 +354,12 @@ impl FoctetStream for QuicStream {
     }
     async fn send_bytes(&mut self, bytes: bytes::Bytes) -> Result<usize> {
         let len = bytes.len();
-        let mut framed_writer =
-            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
-        framed_writer.send(bytes).await?;
-        framed_writer.flush().await?;
+        self.framed_writer.send(bytes).await?;
+        self.framed_writer.flush().await?;
         Ok(len)
     }
     async fn receive_bytes(&mut self) -> Result<bytes::BytesMut> {
-        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
-        let bytes = framed_reader.next().await;
+        let bytes = self.framed_reader.next().await;
         match bytes {
             Some(Ok(bytes)) => {
                 Ok(bytes)
@@ -384,8 +373,6 @@ impl FoctetStream for QuicStream {
         }
     }
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
-        let mut framed_writer =
-            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let mut offset = 0;
         while offset < data.len() {
             let end = std::cmp::min(offset + self.send_buffer_size, data.len());
@@ -399,11 +386,11 @@ impl FoctetStream for QuicStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message).await?;
+            self.framed_writer.send(serialized_message).await?;
 
             offset = end;
         }
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
@@ -411,9 +398,8 @@ impl FoctetStream for QuicStream {
     }
 
     async fn receive_data(&mut self, buffer: &mut Vec<u8>) -> Result<usize> {
-        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
         let mut total_bytes_read: usize = 0;
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -451,12 +437,10 @@ impl FoctetStream for QuicStream {
     }
 
     async fn send_frame(&mut self, frame: Frame) -> Result<OperationId> {
-        let mut framed_writer =
-            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message).await?;
+        self.framed_writer.send(serialized_message).await?;
 
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
@@ -464,8 +448,7 @@ impl FoctetStream for QuicStream {
     }
 
     async fn receive_frame(&mut self) -> Result<Frame> {
-        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -497,8 +480,6 @@ impl FoctetStream for QuicStream {
     }
 
     async fn send_file(&mut self, file_path: &std::path::Path) -> Result<OperationId> {
-        let mut framed_writer =
-            FramedWrite::new(&mut self.send_stream, LengthDelimitedCodec::new());
         let mut file = tokio::fs::File::open(file_path).await?;
         let mut buffer = vec![0u8; self.send_buffer_size];
 
@@ -515,7 +496,7 @@ impl FoctetStream for QuicStream {
                 .with_payload(chunk)
                 .build();
             let serialized_message = frame.to_bytes()?;
-            framed_writer.send(serialized_message).await?;
+            self.framed_writer.send(serialized_message).await?;
         }
 
         // Send the last frame with the FIN flag and NO payload
@@ -525,9 +506,9 @@ impl FoctetStream for QuicStream {
             .with_operation_id(self.next_operation_id)
             .build();
         let serialized_message = frame.to_bytes()?;
-        framed_writer.send(serialized_message).await?;
+        self.framed_writer.send(serialized_message).await?;
 
-        framed_writer.flush().await?;
+        self.framed_writer.flush().await?;
         //framed_writer.get_mut().finish()?;
         let operation_id = self.operation_id();
         self.next_operation_id.increment();
@@ -536,9 +517,8 @@ impl FoctetStream for QuicStream {
 
     async fn receive_file(&mut self, file_path: &std::path::Path) -> Result<u64> {
         let mut total_bytes: u64 = 0;
-        let mut framed_reader = FramedRead::new(&mut self.recv_stream, LengthDelimitedCodec::new());
         let mut file = tokio::fs::File::create(file_path).await?;
-        while let Some(chunk) = framed_reader.next().await {
+        while let Some(chunk) = self.framed_reader.next().await {
             match chunk {
                 Ok(bytes) => {
                     let frame = Frame::from_bytes(&bytes)?;
@@ -561,8 +541,10 @@ impl FoctetStream for QuicStream {
     }
 
     async fn close(&mut self) -> Result<()> {
-        self.send_stream.finish()?;
-        self.recv_stream.stop(VarInt::from_u32(0))?;
+        self.framed_writer.flush().await?;
+        self.framed_writer.get_mut().finish()?;
+        self.framed_reader.get_mut().stop(VarInt::from_u32(0))?;
+        self.framed_writer.close().await?;
         self.is_closed = true;
         Ok(())
     }
@@ -585,7 +567,7 @@ impl FoctetStream for QuicStream {
 
     fn split(self) -> (super::SendStream, super::RecvStream) {
         let quic_send_stream = QuicSendStream {
-            send_stream: self.send_stream,
+            framed_writer: self.framed_writer,
             node_id: self.node_id.clone(),
             stream_id: self.stream_id,
             session_id: self.session_id.clone(),
@@ -595,7 +577,7 @@ impl FoctetStream for QuicStream {
             remote_address: self.remote_address,
         };
         let quic_recv_stream = QuicRecvStream {
-            recv_stream: self.recv_stream,
+            framed_reader: self.framed_reader,
             node_id: self.node_id.clone(),
             stream_id: self.stream_id,
             session_id: self.session_id.clone(),
@@ -612,8 +594,8 @@ impl FoctetStream for QuicStream {
         match (send_stream, recv_stream) {
             (super::SendStream::Quic(quic_send_stream), super::RecvStream::Quic(quic_recv_stream)) => {
                 Ok(Self {
-                    send_stream: quic_send_stream.send_stream,
-                    recv_stream: quic_recv_stream.recv_stream,
+                    framed_writer: quic_send_stream.framed_writer,
+                    framed_reader: quic_recv_stream.framed_reader,
                     node_id: quic_send_stream.node_id,
                     stream_id: quic_send_stream.stream_id,
                     session_id: quic_send_stream.session_id,
@@ -659,9 +641,13 @@ impl QuicConnection {
 
     pub async fn open_stream(&mut self) -> Result<QuicStream> {
         let (send_stream, recv_stream) = self.connection.open_bi().await?;
+        let framed_writer: FramedWrite<SendStream, LengthDelimitedCodec> =
+            FramedWrite::new(send_stream, LengthDelimitedCodec::new());
+        let framed_reader: FramedRead<RecvStream, LengthDelimitedCodec> = 
+            FramedRead::new(recv_stream, LengthDelimitedCodec::new());
         let quic_stream = QuicStream {
-            send_stream: send_stream,
-            recv_stream: recv_stream,
+            framed_writer: framed_writer,
+            framed_reader: framed_reader,
             node_id: self.node_id.clone(),
             stream_id: self.next_stream_id,
             session_id: self.session_id.clone(),
@@ -697,9 +683,13 @@ impl QuicConnection {
                 }
             },
         };
+        let framed_writer: FramedWrite<SendStream, LengthDelimitedCodec> =
+            FramedWrite::new(send_stream, LengthDelimitedCodec::new());
+        let framed_reader: FramedRead<RecvStream, LengthDelimitedCodec> = 
+            FramedRead::new(recv_stream, LengthDelimitedCodec::new());
         let quic_stream = QuicStream {
-            send_stream: send_stream,
-            recv_stream: recv_stream,
+            framed_writer: framed_writer,
+            framed_reader: framed_reader,
             node_id: self.node_id.clone(),
             stream_id: self.next_stream_id,
             session_id: self.session_id.clone(),
