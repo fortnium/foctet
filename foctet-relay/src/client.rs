@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bytes::BytesMut;
-use foctet::{core::{frame::Frame, node::{ConnectionId, NodeId}}, net::connection::{NetworkStream, FoctetStream}};
+use foctet::{core::node::{ConnectionId, NodeId, NodePair}, net::connection::{FoctetRecvStream, FoctetSendStream, FoctetStream, NetworkStream, RecvStream, SendStream}};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use anyhow::Result;
@@ -9,10 +9,14 @@ use crate::message::{Packet, ServerMessage};
 
 #[derive(Debug)]
 struct ClientActor {
-    /// The node ID of this client.
-    node_id: NodeId,
-    /// The network stream between this client and the server.
-    stream: NetworkStream,
+    /// The source node ID.
+    src_node_id: NodeId,
+    /// The destination node ID.
+    dst_node_id: NodeId,
+    /// The send side of the network stream between this client and the server.
+    send_stream: SendStream,
+    /// The receive side of the network stream between this client and the server.
+    recv_stream: RecvStream,
     /// The queue to receive packets from the server to this client.
     /// Other peers will send packets to this client through this queue.
     packet_queue_rx: mpsc::Receiver<Packet>,
@@ -31,7 +35,7 @@ impl ClientActor {
                 Some(packet) = self.packet_queue_rx.recv() => {
                     self.send_packet(packet).await;
                 }
-                Ok(bytes) = self.stream.receive_bytes() => {
+                Ok(bytes) = self.recv_stream.receive_bytes() => {
                     self.handle_framed_bytes(bytes).await;
                 }
             }
@@ -40,13 +44,12 @@ impl ClientActor {
     }
     async fn send_packet(&mut self, packet: Packet) {
         // Send the packet to the connected client
-        if let Err(e) = self.stream.send_bytes(packet.data).await {
+        if let Err(e) = self.send_stream.send_bytes(packet.data).await {
             tracing::warn!("Error sending packet to client: {:?}", e);
         }
     }
     async fn handle_framed_bytes(&mut self, bytes: BytesMut) {
-        let dst_node_id = NodeId::zero();
-        let packet = Packet::new(self.node_id.clone(), dst_node_id, bytes.freeze());
+        let packet = Packet::new(self.src_node_id.clone(), self.dst_node_id.clone(), bytes.freeze());
         if let Err(e) = self.server_channel_tx.send(ServerMessage::SendPacket(packet)).await {
             tracing::warn!("Error sending packet to server: {:?}", e);
         }
@@ -108,15 +111,18 @@ impl Client {
 #[derive(Debug)]
 pub struct ClientManager {
     /// The map of client connections.
-    pub clients: HashMap<NodeId, Client>,
+    pub connections: HashMap<NodePair, Client>,
+    /// The server channel to send messages to the server.
+    pub server_channel_tx: mpsc::Sender<ServerMessage>,
     /// The next connection ID.
     connection_id: ConnectionId,
 }
 
 impl ClientManager {
-    pub fn new() -> Self {
+    pub fn new(server_channel_tx: mpsc::Sender<ServerMessage>) -> Self {
         Self {
-            clients: HashMap::new(),
+            connections: HashMap::new(),
+            server_channel_tx,
             connection_id: ConnectionId::new(0),
         }
     }
@@ -125,48 +131,61 @@ impl ClientManager {
         self.connection_id
     }
     pub async fn shutdown(&mut self) {
-        self.clients.drain().for_each(|(_node_id, client)| {
+        self.connections.drain().for_each(|(_node_pair, client)| {
             tokio::spawn(async move {
                 client.shutdown().await;
             });
         });
     }
     pub async fn send_packet(&mut self, packet: Packet) {
-
+        let node_pair = NodePair::new(packet.src.clone(), packet.dst.clone());
+        if let Some(client) = self.connections.get_mut(&node_pair) {
+            if let Err(e) = client.conn.packet_queue_tx.send(packet).await {
+                tracing::warn!("Error sending packet to client: {:?}", e);
+            }
+        } else {
+            tracing::warn!("Client not found for packet {:?}", packet);
+        }
     }
-    pub async fn register(&mut self, node_id: NodeId, stream: NetworkStream) {
+    pub async fn register(&mut self, pair: NodePair, stream: NetworkStream) {
         // add a new client connection
         // if the client already exists, shutdown the existing connection
-        if let Some(client) = self.clients.remove(&node_id) {
+        if let Some(client) = self.connections.remove(&pair) {
             tokio::spawn(async move {
                 client.shutdown().await;
             });
         }
         let (packet_queue_tx, packet_queue_rx) = mpsc::channel(100);
-        let (server_channel_tx, server_channel_rx) = mpsc::channel(100);
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
         let connection_id = self.next_connection_id();
+        let (send_stream, recv_stream) = stream.split();
         let actor = ClientActor {
-            node_id: node_id.clone(),
-            stream,
+            src_node_id: pair.src.clone(),
+            dst_node_id: pair.dst.clone(),
+            send_stream,
+            recv_stream,
             packet_queue_rx,
-            server_channel_tx,
+            server_channel_tx: self.server_channel_tx.clone(),
         };
         let handle = AbortOnDropHandle::new(tokio::spawn(async move {
             let _ = actor.run(cancel_clone).await;
         }));
         let conn = ClientConnection {
             connection_id,
-            node_id: node_id.clone(),
+            node_id: pair.src.clone(),
             handle,
             packet_queue_tx,
             cancel,
         };
-        let client = Client::new(node_id.clone(), conn);
-        self.clients.insert(node_id, client);
+        let client = Client::new(pair.src.clone(), conn);
+        self.connections.insert(pair, client);
     }
-    pub async fn unregister(&mut self, node_id: NodeId) {
-
+    pub async fn unregister(&mut self, node_pair: NodePair) {
+        if let Some(client) = self.connections.remove(&node_pair) {
+            tokio::spawn(async move {
+                client.shutdown().await;
+            });
+        }
     }
 }

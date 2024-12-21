@@ -1,9 +1,9 @@
-use foctet::{core::{frame::{Frame, FrameType, Payload}, node::NodeId}, net::{config::TransportProtocol, connection::{FoctetStream, NetworkStream}, endpoint::{Endpoint, EndpointHandle, Listener}}};
+use foctet::{core::{frame::{Frame, FrameType, Payload}, node::{NodeId, NodePair}}, net::{config::TransportProtocol, connection::{FoctetStream, NetworkStream}, endpoint::{Endpoint, EndpointHandle, Listener}}};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use anyhow::Result;
 
-use crate::{client::ClientManager, config::{RelayConfig, ServerConfig}, message::ServerMessage};
+use crate::{client::ClientManager, config::{RelayConfig, ServerConfig}, message::{RelayedConnection, ServerMessage}};
 
 #[derive(Debug)]
 pub struct RelayServerActor {
@@ -12,10 +12,10 @@ pub struct RelayServerActor {
 }
 
 impl RelayServerActor {
-    pub fn new(server_channel_rx: mpsc::Receiver<ServerMessage>) -> Self {
+    pub fn new(server_channel_tx: mpsc::Sender<ServerMessage>, server_channel_rx: mpsc::Receiver<ServerMessage>) -> Self {
         Self {
             server_channel_rx,
-            client_manager: ClientManager::new(),
+            client_manager: ClientManager::new(server_channel_tx),
         }
     }
     /// Start the server actor loop.
@@ -46,13 +46,14 @@ impl RelayServerActor {
                 // Send the packet to DST node
                 self.client_manager.send_packet(packet).await;
             }
-            ServerMessage::AddClient(node_id, stream) => {
+            ServerMessage::AddClient(relayed_connection) => {
                 // Add a new client connection
-                self.client_manager.register(node_id, stream).await;
+                let node_pair = NodePair::new(relayed_connection.src, relayed_connection.dst);
+                self.client_manager.register(node_pair, relayed_connection.stream).await;
             }
-            ServerMessage::RemoveClient(node_id) => {
+            ServerMessage::RemoveClient(node_pair) => {
                 // Remove the client connection
-                self.client_manager.unregister(node_id).await;
+                self.client_manager.unregister(node_pair).await;
             }
         }
     }
@@ -88,7 +89,7 @@ pub struct RelayServer {
 impl RelayServer {
     pub fn spawn(config: RelayConfig) -> Result<Self> {
         let (server_channel_tx, server_channel_rx) = mpsc::channel(100);
-        let actor = RelayServerActor::new(server_channel_rx);
+        let actor = RelayServerActor::new(server_channel_tx.clone(), server_channel_rx);
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
         let actor_loop_handler = AbortOnDropHandle::new(tokio::spawn(async move {
@@ -185,7 +186,8 @@ async fn handle_stream(mut stream: NetworkStream, sender: mpsc::Sender<ServerMes
     // Wait for handshake
     // if handshake is successful, add the client to the relay server
     let mut handshaked = false;
-    let mut node_id = NodeId::zero();
+    let mut src_node_id = NodeId::zero();
+    let mut dst_node_id = NodeId::zero();
     loop {
         match stream.receive_frame().await {
             Ok(frame) => {
@@ -194,11 +196,9 @@ async fn handle_stream(mut stream: NetworkStream, sender: mpsc::Sender<ServerMes
                     FrameType::Connect => {
                         if let Some(payload) = frame.payload {
                             match payload {
-                                Payload::Handshake(handshake) => {
-                                    node_id = handshake.node_id;
-                                }
                                 Payload::HandshakeRelay(handshake) => {
-                                    node_id = handshake.src_node_id;
+                                    src_node_id = handshake.src_node_id;
+                                    dst_node_id = handshake.dst_node_id;
                                 }
                                 _ => {
                                     tracing::warn!("Invalid payload for handshake: {:?}", payload);
@@ -232,7 +232,12 @@ async fn handle_stream(mut stream: NetworkStream, sender: mpsc::Sender<ServerMes
             }
         }
         if handshaked {
-            let _ = sender.send(ServerMessage::AddClient(node_id, stream)).await;
+            let relayed_connection = RelayedConnection {
+                src: src_node_id,
+                dst: dst_node_id,
+                stream,
+            };
+            let _ = sender.send(ServerMessage::AddClient(relayed_connection)).await;
             break;
         }
     }

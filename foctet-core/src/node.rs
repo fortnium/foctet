@@ -298,6 +298,18 @@ impl NodeConnection {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct NodePair {
+    pub src: NodeId,
+    pub dst: NodeId,
+}
+
+impl NodePair {
+    pub fn new(src: NodeId, dst: NodeId) -> Self {
+        Self { src, dst }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};

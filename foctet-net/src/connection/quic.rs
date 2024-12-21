@@ -43,6 +43,12 @@ impl FoctetSendStream for QuicSendStream {
     fn operation_id(&self) -> OperationId {
         self.next_operation_id
     }
+    async fn send_bytes(&mut self, bytes: bytes::Bytes) -> Result<usize> {
+        let len = bytes.len();
+        self.framed_writer.send(bytes).await?;
+        self.framed_writer.flush().await?;
+        Ok(len)
+    }
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId> {
         let mut offset = 0;
         while offset < data.len() {
@@ -146,6 +152,20 @@ impl FoctetRecvStream for QuicRecvStream {
     }
     fn stream_id(&self) -> StreamId {
         self.stream_id
+    }
+    async fn receive_bytes(&mut self) -> Result<bytes::BytesMut> {
+        let bytes = self.framed_reader.next().await;
+        match bytes {
+            Some(Ok(bytes)) => {
+                Ok(bytes)
+            }
+            Some(Err(e)) => {
+                Err(e.into())
+            }
+            None => {
+                Err(StreamError::Closed.into())
+            }
+        }
     }
     async fn receive_data(&mut self, buffer: &mut Vec<u8>) -> Result<usize> {
         let mut total_bytes_read: usize = 0;

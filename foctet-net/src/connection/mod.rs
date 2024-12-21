@@ -340,6 +340,9 @@ pub trait FoctetSendStream {
     /// Returns the current operation ID.
     fn operation_id(&self) -> OperationId;
 
+    /// Sends bytes over the stream
+    async fn send_bytes(&mut self, bytes: Bytes) -> Result<usize>;
+
     /// Sends data over the stream
     async fn send_data(&mut self, data: &[u8]) -> Result<OperationId>;
 
@@ -366,6 +369,9 @@ pub trait FoctetRecvStream {
 
     /// Returns the Stream ID
     fn stream_id(&self) -> StreamId;
+
+    /// Receives bytes from the stream
+    async fn receive_bytes(&mut self) -> Result<BytesMut>;
 
     /// Receives data from the stream
     async fn receive_data(&mut self, buffer: &mut Vec<u8>) -> Result<usize>;
@@ -414,6 +420,14 @@ impl FoctetSendStream for SendStream {
         match self {
             SendStream::Quic(stream) => stream.operation_id(),
             SendStream::Tcp(stream) => stream.operation_id(),
+        }
+    }
+
+    /// Sends bytes over the stream
+    async fn send_bytes(&mut self, bytes: Bytes) -> Result<usize> {
+        match self {
+            SendStream::Quic(stream) => stream.send_bytes(bytes).await,
+            SendStream::Tcp(stream) => stream.send_bytes(bytes).await,
         }
     }
 
@@ -486,6 +500,14 @@ impl FoctetRecvStream for RecvStream {
         match self {
             RecvStream::Quic(stream) => stream.stream_id(),
             RecvStream::Tcp(stream) => stream.stream_id(),
+        }
+    }
+
+    /// Receives bytes from the stream
+    async fn receive_bytes(&mut self) -> Result<BytesMut> {
+        match self {
+            RecvStream::Quic(stream) => stream.receive_bytes().await,
+            RecvStream::Tcp(stream) => stream.receive_bytes().await,
         }
     }
 

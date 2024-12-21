@@ -1,4 +1,4 @@
-use foctet::{core::node::NodeId, net::connection::NetworkStream};
+use foctet::{core::node::{NodeId, NodePair}, net::connection::NetworkStream};
 use bytes::Bytes;
 
 #[derive(Debug)]
@@ -14,8 +14,15 @@ impl Packet {
     }
 }
 
+#[derive(Debug)]
+pub struct RelayedConnection {
+    pub src: NodeId,
+    pub dst: NodeId,
+    pub stream: NetworkStream,
+}
+
 pub enum ServerMessage {
     SendPacket(Packet),
-    AddClient(NodeId, NetworkStream),
-    RemoveClient(NodeId),
+    AddClient(RelayedConnection),
+    RemoveClient(NodePair),
 }
