@@ -700,17 +700,17 @@ impl FoctetStream for NetworkStream {
     /// Merges a `SendStream` and a `RecvStream` back into a `NetworkStream`.
     fn merge(send_stream: SendStream, recv_stream: RecvStream) -> Result<Self> {
         match (send_stream, recv_stream) {
-            // QUICのストリームをマージ
+            // Merge QUIC streams
             (SendStream::Quic(send), RecvStream::Quic(recv)) => {
                 Ok(NetworkStream::Quic(QuicStream::merge(SendStream::Quic(send), RecvStream::Quic(recv))?))
             }
 
-            // TCPのストリームをマージ
+            // Merge TCP streams
             (SendStream::Tcp(send), RecvStream::Tcp(recv)) => {
                 Ok(NetworkStream::Tcp(TlsTcpStream::merge(SendStream::Tcp(send), RecvStream::Tcp(recv))?))
             }
 
-            // 不一致があればエラー
+            // SendStream and RecvStream types do not match
             _ => Err(anyhow::anyhow!("SendStream and RecvStream types do not match")),
         }
     }
