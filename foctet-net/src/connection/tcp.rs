@@ -33,6 +33,7 @@ pub struct TlsTcpSendStream {
     pub session_id: SessionId,
     pub send_buffer_size: usize,
     pub is_closed: bool,
+    pub is_relay: bool,
     pub next_operation_id: OperationId,
     pub remote_address: SocketAddr,
 }
@@ -147,6 +148,7 @@ pub struct TlsTcpRecvStream {
     pub session_id: SessionId,
     pub receive_buffer_size: usize,
     pub is_closed: bool,
+    pub is_relay: bool,
     pub remote_address: SocketAddr,
 }
 
@@ -259,8 +261,16 @@ pub struct TlsTcpStream {
     pub receive_buffer_size: usize,
     pub established: bool,
     pub is_closed: bool,
+    pub is_relay: bool,
     pub next_operation_id: OperationId,
     pub remote_address: SocketAddr,
+}
+
+impl TlsTcpStream {
+    pub fn with_relay(mut self) -> Self {
+        self.is_relay = true;
+        self
+    }
 }
 
 impl AsyncRead for TlsTcpStream {
@@ -513,6 +523,7 @@ impl FoctetStream for TlsTcpStream {
             session_id: self.session_id.clone(),
             send_buffer_size: self.send_buffer_size,
             is_closed: self.is_closed,
+            is_relay: self.is_relay,
             next_operation_id: self.next_operation_id,
             remote_address: self.remote_address,
         };
@@ -523,6 +534,7 @@ impl FoctetStream for TlsTcpStream {
             session_id: self.session_id,
             receive_buffer_size: self.receive_buffer_size,
             is_closed: self.is_closed,
+            is_relay: self.is_relay,
             remote_address: self.remote_address,
         };
         let send_stream = super::SendStream::Tcp(tcp_send_stream);
@@ -542,6 +554,7 @@ impl FoctetStream for TlsTcpStream {
                     receive_buffer_size: tcp_recv_stream.receive_buffer_size,
                     established: true,
                     is_closed: tcp_send_stream.is_closed,
+                    is_relay: tcp_send_stream.is_relay,
                     next_operation_id: tcp_send_stream.next_operation_id,
                     remote_address: tcp_send_stream.remote_address,
                 })
@@ -595,6 +608,7 @@ impl TcpSocket {
             receive_buffer_size: self.config.read_buffer_size(),
             established: false,
             is_closed: false,
+            is_relay: false,
             next_operation_id: OperationId(0),
             remote_address: remote_address,
         };
@@ -634,6 +648,7 @@ impl TcpSocket {
                                         receive_buffer_size: self.config.read_buffer_size(),
                                         established: false,
                                         is_closed: false,
+                                        is_relay: false,
                                         next_operation_id: OperationId(0),
                                         remote_address,
                                     };
@@ -683,7 +698,7 @@ impl TcpSocket {
             match self.connect(addr, &server_name).await {
                 Ok(connection) => {
                     tracing::info!("Connected to {}", addr);
-                    return Ok(connection);
+                    return Ok(connection.with_relay());
                 }
                 Err(e) => {
                     tracing::error!("Error connecting to {}: {:?}", addr, e);

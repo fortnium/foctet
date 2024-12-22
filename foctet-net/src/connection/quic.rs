@@ -29,6 +29,7 @@ pub struct QuicSendStream {
     pub session_id: SessionId,
     pub send_buffer_size: usize,
     pub is_closed: bool,
+    pub is_relay: bool,
     pub next_operation_id: OperationId,
     pub remote_address: SocketAddr,
 }
@@ -143,6 +144,7 @@ pub struct QuicRecvStream {
     pub session_id: SessionId,
     pub receive_buffer_size: usize,
     pub is_closed: bool,
+    pub is_relay: bool,
     pub remote_address: SocketAddr,
 }
 
@@ -285,6 +287,7 @@ pub struct QuicStream {
     pub send_buffer_size: usize,
     pub receive_buffer_size: usize,
     pub established: bool,
+    pub is_relay: bool,
     pub is_closed: bool,
     pub next_operation_id: OperationId,
     pub remote_address: SocketAddr,
@@ -574,6 +577,7 @@ impl FoctetStream for QuicStream {
             session_id: self.session_id.clone(),
             send_buffer_size: self.send_buffer_size,
             is_closed: self.is_closed,
+            is_relay: self.is_relay,
             next_operation_id: self.next_operation_id,
             remote_address: self.remote_address,
         };
@@ -584,6 +588,7 @@ impl FoctetStream for QuicStream {
             session_id: self.session_id.clone(),
             receive_buffer_size: self.receive_buffer_size,
             is_closed: self.is_closed,
+            is_relay: self.is_relay,
             remote_address: self.remote_address,
         };
         let send_stream = super::SendStream::Quic(quic_send_stream);
@@ -604,6 +609,7 @@ impl FoctetStream for QuicStream {
                     receive_buffer_size: quic_recv_stream.receive_buffer_size,
                     established: true,
                     is_closed: quic_send_stream.is_closed,
+                    is_relay: quic_send_stream.is_relay,
                     next_operation_id: quic_send_stream.next_operation_id,
                     remote_address: quic_send_stream.remote_address,
                 })
@@ -622,6 +628,7 @@ pub struct QuicConnection {
     /// The QUIC connection
     pub connection: Connection,
     pub state: ConnectionState,
+    pub is_relay: bool,
     pub send_buffer_size: usize,
     pub receive_buffer_size: usize,
     pub next_stream_id: StreamId,
@@ -634,10 +641,16 @@ impl QuicConnection {
             session_id: SessionId::new(),
             connection: connection,
             state: ConnectionState::Connected,
+            is_relay: false,
             send_buffer_size: config.write_buffer_size(),
             receive_buffer_size: config.read_buffer_size(),
             next_stream_id: StreamId::new(0),
         }
+    }
+
+    pub fn with_relay(mut self) -> Self {
+        self.is_relay = true;
+        self
     }
 
     pub async fn open_stream(&mut self) -> Result<QuicStream> {
@@ -656,6 +669,7 @@ impl QuicConnection {
             receive_buffer_size: self.receive_buffer_size,
             established: false,
             is_closed: false,
+            is_relay: self.is_relay,
             next_operation_id: OperationId(0),
             remote_address: self.remote_address(),
         };
@@ -698,6 +712,7 @@ impl QuicConnection {
             receive_buffer_size: self.receive_buffer_size,
             established: false,
             is_closed: false,
+            is_relay: self.is_relay,
             next_operation_id: OperationId(0),
             remote_address: self.remote_address(),
         };
@@ -849,7 +864,7 @@ impl QuicSocket {
             match self.connect(addr, &server_name).await {
                 Ok(connection) => {
                     tracing::info!("Connected to {}", addr);
-                    return Ok(connection);
+                    return Ok(connection.with_relay());
                 }
                 Err(e) => {
                     tracing::error!("Error connecting to {}: {:?}", addr, e);
