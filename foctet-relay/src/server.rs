@@ -7,13 +7,15 @@ use crate::{client::ClientManager, config::{RelayConfig, ServerConfig}, message:
 
 #[derive(Debug)]
 pub struct RelayServerActor {
+    pub config: RelayConfig,
     pub server_channel_rx: mpsc::Receiver<ServerMessage>,
     pub client_manager: ClientManager,
 }
 
 impl RelayServerActor {
-    pub fn new(server_channel_tx: mpsc::Sender<ServerMessage>, server_channel_rx: mpsc::Receiver<ServerMessage>) -> Self {
+    pub fn new(config: RelayConfig, server_channel_tx: mpsc::Sender<ServerMessage>, server_channel_rx: mpsc::Receiver<ServerMessage>) -> Self {
         Self {
+            config,
             server_channel_rx,
             client_manager: ClientManager::new(server_channel_tx),
         }
@@ -44,12 +46,12 @@ impl RelayServerActor {
         match msg {
             ServerMessage::SendPacket(packet) => {
                 // Send the packet to DST node
-                self.client_manager.send_packet(packet).await;
+                self.client_manager.relay_packet(packet).await;
             }
             ServerMessage::AddClient(relayed_connection) => {
                 // Add a new client connection
                 let node_pair = NodePair::new(relayed_connection.src, relayed_connection.dst);
-                self.client_manager.register(node_pair, relayed_connection.stream).await;
+                self.client_manager.register(node_pair, relayed_connection.stream, self.config.packet_queue_capacity).await;
             }
             ServerMessage::RemoveClient(node_pair) => {
                 // Remove the client connection
@@ -61,6 +63,7 @@ impl RelayServerActor {
 
 #[derive(Debug)]
 pub struct RelayServerHandle {
+    /// Cancellation token to stop the server actor loop and QUIC/TCP listeners.
     cancel: CancellationToken,
 }
 
@@ -77,7 +80,7 @@ impl RelayServerHandle {
 
 #[derive(Debug)]
 pub struct RelayServer {
-    pub config: RelayConfig,
+    //pub config: RelayConfig,
     /// Server message channel to send messages to the server actor.
     pub server_channel_tx: mpsc::Sender<ServerMessage>,
     /// Server actor loop handler
@@ -88,15 +91,15 @@ pub struct RelayServer {
 
 impl RelayServer {
     pub fn spawn(config: RelayConfig) -> Result<Self> {
-        let (server_channel_tx, server_channel_rx) = mpsc::channel(100);
-        let actor = RelayServerActor::new(server_channel_tx.clone(), server_channel_rx);
+        let (server_channel_tx, server_channel_rx) = mpsc::channel(config.server_channel_capacity);
+        let actor = RelayServerActor::new(config, server_channel_tx.clone(), server_channel_rx);
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
         let actor_loop_handler = AbortOnDropHandle::new(tokio::spawn(async move {
             actor.run(cancel_clone).await
         }));
         Ok(Self {
-            config,
+            //config,
             server_channel_tx,
             actor_loop_handler,
             cancel,
@@ -178,6 +181,7 @@ async fn run_server_task(mut listener: Listener, relay_server: RelayServer) -> R
             handle_stream(stream, sender).await;
         });
     }
+    relay_server.close().await;
     Ok(())
 }
 
@@ -196,28 +200,30 @@ async fn handle_stream(mut stream: NetworkStream, sender: mpsc::Sender<ServerMes
                     FrameType::Connect => {
                         if let Some(payload) = frame.payload {
                             match payload {
-                                Payload::HandshakeRelay(handshake) => {
+                                Payload::Handshake(handshake) => {
                                     src_node_id = handshake.src_node_id;
                                     dst_node_id = handshake.dst_node_id;
-                                }
+                                },
                                 _ => {
                                     tracing::warn!("Invalid payload for handshake: {:?}", payload);
                                     continue;
                                 }
                             }
-                        }
-                        let frame: Frame = Frame::builder()
-                            .with_fin(true)
-                            .with_frame_type(FrameType::Connected)
-                            .as_response()
-                            .build();
-                        match stream.send_frame(frame).await {
-                            Ok(_) => {
-                                handshaked = true;
-                                tracing::info!("Sent connected frame back");
-                            }
-                            Err(e) => {
-                                tracing::info!("Failed to send frame back: {:?}", e);
+                            if !src_node_id.is_zero() {
+                                let frame: Frame = Frame::builder()
+                                    .with_fin(true)
+                                    .with_frame_type(FrameType::Connected)
+                                    .as_response()
+                                    .build();
+                                match stream.send_frame(frame).await {
+                                    Ok(_) => {
+                                        handshaked = true;
+                                        tracing::info!("Sent connected frame back");
+                                    }
+                                    Err(e) => {
+                                        tracing::info!("Failed to send frame back: {:?}", e);
+                                    }
+                                }
                             }
                         }
                     }

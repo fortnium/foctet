@@ -39,12 +39,12 @@ impl RelayClient {
     pub async fn connect_quic(&mut self, dst_node_addr: NodeId, relay_addr: RelayAddr) -> Result<NetworkStream> {
         let mut conn = self.quic_socket.connect_relay(relay_addr).await?;
         let mut stream = conn.open_stream().await?;
-        stream.handshake_relay(dst_node_addr, None).await?;
+        stream.handshake(dst_node_addr, None).await?;
         Ok(NetworkStream::Quic(stream))
     }
     pub async fn connect_tcp(&mut self, dst_node_addr: NodeId, relay_addr: RelayAddr) -> Result<NetworkStream> {
         let mut stream = self.tcp_socket.connect_relay(relay_addr).await?;
-        stream.handshake_relay(dst_node_addr, None).await?;
+        stream.handshake(dst_node_addr, None).await?;
         Ok(NetworkStream::Tcp(stream))
     }
 }

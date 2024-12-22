@@ -302,7 +302,6 @@ pub enum Payload {
     Metadata(Metadata),
     ContentId(ContentId),
     Handshake(HandshakeData),
-    HandshakeRelay(RelayHandshakeData),
 }
 
 impl Payload {
@@ -325,10 +324,6 @@ impl Payload {
                 bincode::serialize(id).unwrap_or_default().len()
             }
             Self::Handshake(data) => {
-                // Serialize the handshake data to bytes and get the size
-                bincode::serialize(data).unwrap_or_default().len()
-            }
-            Self::HandshakeRelay(data) => {
                 // Serialize the handshake data to bytes and get the size
                 bincode::serialize(data).unwrap_or_default().len()
             }
@@ -361,10 +356,6 @@ impl Payload {
     /// Create a new handshake data payload
     pub fn handshake(data: HandshakeData) -> Self {
         Self::Handshake(data)
-    }
-    /// Create a new relay handshake data payload
-    pub fn handshake_relay(data: RelayHandshakeData) -> Self {
-        Self::HandshakeRelay(data)
     }
 }
 
@@ -412,34 +403,25 @@ pub struct LocalFileMetadata {
 /// Represents the handshake data exchanged during relay connection setup
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct HandshakeData {
-    pub node_id: NodeId,
-    pub data: Option<Vec<u8>>,
-}
-
-impl HandshakeData {
-    /// Create a new handshake data
-    pub fn new(node_id: NodeId, data: Option<Vec<u8>>) -> Self {
-        Self {
-            node_id,
-            data,
-        }
-    }
-}
-
-/// Represents the handshake data exchanged during relay connection setup
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
-pub struct RelayHandshakeData {
     pub src_node_id: NodeId,
     pub dst_node_id: NodeId,
     pub data: Option<Vec<u8>>,
 }
 
-impl RelayHandshakeData {
+impl HandshakeData {
     /// Create a new handshake data
     pub fn new(src_node_id: NodeId, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Self {
         Self {
             src_node_id,
             dst_node_id,
+            data,
+        }
+    }
+    /// Create a new handshake data with unknown destination node ID
+    pub fn with_unknown_dst(src_node_id: NodeId, data: Option<Vec<u8>>) -> Self {
+        Self {
+            src_node_id,
+            dst_node_id: NodeId::zero(),
             data,
         }
     }

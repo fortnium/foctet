@@ -231,7 +231,7 @@ impl Endpoint {
 
         let mut conn = self.quic_socket.connect_node(node_addr).await?;
         let mut stream = conn.open_stream().await?;
-        stream.handshake(None).await?;
+        stream.handshake(node_id.clone(),None).await?;
         connections.insert(node_id, conn);
 
         Ok(NetworkStream::Quic(stream))
@@ -262,8 +262,9 @@ impl Endpoint {
         Err(anyhow!("Failed to connect to the node"))
     }
     pub async fn connect_tcp_direct(&mut self, node_addr: NodeAddr) -> Result<NetworkStream> {
+        let node_id = node_addr.node_id.clone();
         let mut stream = self.tcp_socket.connect_node(node_addr).await?;
-        stream.handshake(None).await?;
+        stream.handshake(node_id, None).await?;
         Ok(NetworkStream::Tcp(stream))
     }
     pub async fn connect_tcp_relay(&mut self, node_addr: NodeAddr) -> Result<NetworkStream> {

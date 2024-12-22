@@ -8,7 +8,6 @@ use anyhow::Result;
 use foctet_core::error::StreamError;
 use foctet_core::frame::HandshakeData;
 use foctet_core::frame::OperationId;
-use foctet_core::frame::RelayHandshakeData;
 use foctet_core::frame::{Frame, FrameType, Payload, StreamId};
 use foctet_core::node::RelayAddr;
 use foctet_core::node::{SessionId, NodeAddr, NodeId};
@@ -308,32 +307,13 @@ impl FoctetStream for TlsTcpStream {
     fn operation_id(&self) -> OperationId {
         self.next_operation_id
     }
-    async fn handshake(&mut self, data: Option<Vec<u8>>) -> Result<()> {
+    async fn handshake(&mut self, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Result<()> {
         // Send a handshake frame to the peer
         let frame: Frame = Frame::builder()
             .with_fin(true)
             .with_frame_type(FrameType::Connect)
             .with_operation_id(self.next_operation_id)
-            .with_payload(Payload::handshake(HandshakeData::new(self.node_id.clone(), data)))
-            .build();
-        self.send_frame(frame).await?;
-        // Receive a handshake frame from the peer
-        // Wait for the `Connected` frame from the peer
-        let frame = self.receive_frame().await?;
-        if frame.frame_type == FrameType::Connected {
-            self.established = true;
-            Ok(())
-        } else {
-            Err(anyhow!("Failed to establish connection"))
-        }
-    }
-    async fn handshake_relay(&mut self, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Result<()> {
-        // Send a handshake frame to the peer
-        let frame: Frame = Frame::builder()
-            .with_fin(true)
-            .with_frame_type(FrameType::Connect)
-            .with_operation_id(self.next_operation_id)
-            .with_payload(Payload::handshake_relay(RelayHandshakeData::new(self.node_id.clone(), dst_node_id, data)))
+            .with_payload(Payload::handshake(HandshakeData::new(self.node_id.clone(), dst_node_id, data)))
             .build();
         self.send_frame(frame).await?;
         // Receive a handshake frame from the peer

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bytes::BytesMut;
-use foctet::{core::node::{ConnectionId, NodeId, NodePair}, net::connection::{FoctetRecvStream, FoctetSendStream, FoctetStream, NetworkStream, RecvStream, SendStream}};
+use foctet::{core::{error::StreamError, node::{ConnectionId, NodeId, NodePair}}, net::connection::{FoctetRecvStream, FoctetSendStream, FoctetStream, NetworkStream, RecvStream, SendStream}};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use anyhow::Result;
@@ -35,8 +35,29 @@ impl ClientActor {
                 Some(packet) = self.packet_queue_rx.recv() => {
                     self.send_packet(packet).await;
                 }
-                Ok(bytes) = self.recv_stream.receive_bytes() => {
+                /* Ok(bytes) = self.recv_stream.receive_bytes() => {
                     self.handle_framed_bytes(bytes).await;
+                } */
+                result = self.recv_stream.receive_bytes() => match result {
+                    Ok(bytes) => {
+                        self.handle_framed_bytes(bytes).await;
+                    }
+                    Err(e) => {
+                        if let Some(e) = e.downcast_ref::<StreamError>() {
+                            match e {
+                                StreamError::Closed => {
+                                    self.shutdown().await;
+                                    tracing::info!("Client connection closed");
+                                    break;
+                                }
+                                _ => {
+                                    tracing::warn!("Error receiving bytes from client: {:?}", e);
+                                }
+                            }
+                        } else {
+                            tracing::warn!("Error receiving bytes from client: {:?}", e);
+                        }
+                    }
                 }
             }
         }
@@ -53,6 +74,10 @@ impl ClientActor {
         if let Err(e) = self.server_channel_tx.send(ServerMessage::SendPacket(packet)).await {
             tracing::warn!("Error sending packet to server: {:?}", e);
         }
+    }
+    async fn shutdown(&mut self) {
+        // Cancel the client actor
+        self.server_channel_tx.send(ServerMessage::RemoveClient(NodePair::new(self.src_node_id.clone(), self.dst_node_id.clone()))).await.unwrap();
     }
 }
 
@@ -86,8 +111,7 @@ impl ClientConnection {
 
 #[derive(Debug)]
 pub struct Client {
-    /// The node ID of this client.
-    node_id: NodeId,
+    //node_id: NodeId,
     /// The connection between this client and the server.
     conn: ClientConnection,
     /// The known peers of this client.
@@ -95,12 +119,15 @@ pub struct Client {
 }
 
 impl Client {
-    fn new(node_id: NodeId, conn: ClientConnection) -> Self {
+    fn new(conn: ClientConnection) -> Self {
         Self {
-            node_id,
+            //node_id,
             conn,
             known_peers: HashSet::new(),
         }
+    }
+    pub fn add_known_peer(&mut self, node_id: NodeId) {
+        self.known_peers.insert(node_id);
     }
     pub async fn shutdown(self) {
         // Cancel the client connection
@@ -137,17 +164,40 @@ impl ClientManager {
             });
         });
     }
-    pub async fn send_packet(&mut self, packet: Packet) {
-        let node_pair = NodePair::new(packet.src.clone(), packet.dst.clone());
-        if let Some(client) = self.connections.get_mut(&node_pair) {
-            if let Err(e) = client.conn.packet_queue_tx.send(packet).await {
-                tracing::warn!("Error sending packet to client: {:?}", e);
+    pub async fn relay_packet(&mut self, packet: Packet) {
+        let node_pair = NodePair::new(packet.dst.clone(), packet.src.clone());
+        match self.connections.get_mut(&node_pair) {
+            Some(client) => {
+                client.add_known_peer(packet.src.clone());
+                match client.conn.packet_queue_tx.send(packet).await {
+                    Ok(_) => {
+                        
+                    },
+                    Err(e) => {
+                        tracing::warn!("Error sending packet to client: {:?}", e);
+                    }
+                }
+            },
+            None => {
+                // Not found. Find the server connection and send the packet to the server
+                let node_pair = NodePair::new(packet.dst.clone(), NodeId::zero());
+                if let Some(client) = self.connections.get_mut(&node_pair) {
+                    client.add_known_peer(packet.src.clone());
+                    match client.conn.packet_queue_tx.send(packet).await {
+                        Ok(_) => {
+                            
+                        },
+                        Err(e) => {
+                            tracing::warn!("Error sending packet to client: {:?}", e);
+                        }
+                    }
+                } else {
+                    tracing::warn!("Server connection not found for packet {:?}", packet);
+                }
             }
-        } else {
-            tracing::warn!("Client not found for packet {:?}", packet);
         }
     }
-    pub async fn register(&mut self, pair: NodePair, stream: NetworkStream) {
+    pub async fn register(&mut self, pair: NodePair, stream: NetworkStream, packet_queue_capacity: usize) {
         // add a new client connection
         // if the client already exists, shutdown the existing connection
         if let Some(client) = self.connections.remove(&pair) {
@@ -155,7 +205,7 @@ impl ClientManager {
                 client.shutdown().await;
             });
         }
-        let (packet_queue_tx, packet_queue_rx) = mpsc::channel(100);
+        let (packet_queue_tx, packet_queue_rx) = mpsc::channel(packet_queue_capacity);
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
         let connection_id = self.next_connection_id();
@@ -178,7 +228,7 @@ impl ClientManager {
             packet_queue_tx,
             cancel,
         };
-        let client = Client::new(pair.src.clone(), conn);
+        let client = Client::new(conn);
         self.connections.insert(pair, client);
     }
     pub async fn unregister(&mut self, node_pair: NodePair) {

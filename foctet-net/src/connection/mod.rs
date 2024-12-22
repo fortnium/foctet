@@ -277,10 +277,7 @@ pub trait FoctetStream {
     fn operation_id(&self) -> OperationId;
 
     /// Handshake with the remote node
-    async fn handshake(&mut self, data: Option<Vec<u8>>) -> Result<()>;
-
-    /// Handshake with the relay server
-    async fn handshake_relay(&mut self, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Result<()>;
+    async fn handshake(&mut self, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Result<()>;
 
     /// Sends bytes over the stream
     async fn send_bytes(&mut self, bytes: Bytes) -> Result<usize>;
@@ -589,17 +586,10 @@ impl FoctetStream for NetworkStream {
         }
     }
 
-    async fn handshake(&mut self, data: Option<Vec<u8>>) -> Result<()> {
+    async fn handshake(&mut self, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Result<()> {
         match self {
-            NetworkStream::Quic(stream) => stream.handshake(data).await,
-            NetworkStream::Tcp(stream) => stream.handshake(data).await,
-        }
-    }
-
-    async fn handshake_relay(&mut self, dst_node_id: NodeId, data: Option<Vec<u8>>) -> Result<()> {
-        match self {
-            NetworkStream::Quic(stream) => stream.handshake_relay(dst_node_id, data).await,
-            NetworkStream::Tcp(stream) => stream.handshake_relay(dst_node_id, data).await,
+            NetworkStream::Quic(stream) => stream.handshake(dst_node_id, data).await,
+            NetworkStream::Tcp(stream) => stream.handshake(dst_node_id, data).await,
         }
     }
 
