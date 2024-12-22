@@ -6,7 +6,7 @@ mod server;
 
 use std::{net::SocketAddr, path::PathBuf};
 use config::ServerConfig;
-use foctet::core::node::NodeId;
+use foctet::{core::{default::{DEFAULT_RELAY_PACKET_QUEUE_CAPACITY, DEFAULT_RELAY_SERVER_CHANNEL_CAPACITY}, node::NodeId}, net::config::EndpointConfig};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 use clap::Parser;
@@ -53,6 +53,24 @@ struct Args {
     /// Insecure mode to use self-signed certificate and skip certificate verification.
     #[arg(short, long, help = "Insecure mode to use self-signed certificate and skip certificate verification.")]
     insecure: bool,
+
+    /// The packet queue capacity.
+    #[arg(
+        short = 'q',
+        long = "queue",
+        help = "The packet queue capacity.",
+        default_value = DEFAULT_RELAY_PACKET_QUEUE_CAPACITY.to_string(),
+    )]
+    packet_queue_capacity: usize,
+
+    /// The server channel capacity.
+    #[arg(
+        short = 's',
+        long = "channel",
+        help = "The server channel capacity.",
+        default_value = DEFAULT_RELAY_SERVER_CHANNEL_CAPACITY.to_string(),
+    )]
+    server_channel_capacity: usize,
 }
 
 #[tokio::main]
@@ -68,17 +86,31 @@ async fn main() -> Result<()> {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     // Parse command line arguments
-    let _args = Args::parse();
+    let args = Args::parse();
 
+    // TODO: Add support for config file.
     let node_id = NodeId::generate();
-    let config = ServerConfig::new(node_id);
+    let endpoint_config = EndpointConfig::new()
+        .with_server_addr(args.server_addr)
+        .with_cert_path_option(args.cert_path)
+        .with_key_path_option(args.key_path)
+        .with_insecure(args.insecure);
+
+    let config = ServerConfig::new(node_id)
+        .with_server_name(args.server_name)
+        .with_endpoint_config(endpoint_config)
+        .with_packet_queue_capacity(args.packet_queue_capacity)
+        .with_server_channel_capacity(args.server_channel_capacity);
 
     let mut server = server::Server::spawn(config).await?;
+
+    tracing::info!("Server listening on {}", args.server_addr);
+
     tokio::select! {
         biased;
         _ = tokio::signal::ctrl_c() => (),
         _ = server.handle() => (),
     }
-
+    tracing::info!("Shutting down server...");
     server.shutdown().await
 }
