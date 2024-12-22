@@ -1,6 +1,5 @@
 mod client;
 mod config;
-mod handler;
 mod message;
 mod server;
 
