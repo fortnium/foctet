@@ -131,6 +131,10 @@ impl FoctetSendStream for QuicSendStream {
         self.is_closed
     }
 
+    fn is_relay(&self) -> bool {
+        self.is_relay
+    }
+
     fn remote_address(&self) -> SocketAddr {
         self.remote_address
     }
@@ -270,6 +274,10 @@ impl FoctetRecvStream for QuicRecvStream {
 
     fn is_closed(&self) -> bool {
         self.is_closed
+    }
+
+    fn is_relay(&self) -> bool {
+        self.is_relay
     }
 
     fn remote_address(&self) -> SocketAddr {
@@ -559,6 +567,10 @@ impl FoctetStream for QuicStream {
 
     fn is_closed(&self) -> bool {
         self.is_closed
+    }
+
+    fn is_relay(&self) -> bool {
+        self.is_relay
     }
 
     fn remote_address(&self) -> SocketAddr {

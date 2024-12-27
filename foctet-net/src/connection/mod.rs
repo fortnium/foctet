@@ -312,6 +312,9 @@ pub trait FoctetStream {
     /// Returns the current state of the stream.
     fn is_closed(&self) -> bool;
 
+    /// Return whether the stream is a relay stream.
+    fn is_relay(&self) -> bool;
+
     /// Returns the remote address of the connection.
     fn remote_address(&self) -> SocketAddr;
 
@@ -355,6 +358,9 @@ pub trait FoctetSendStream {
     /// Returns the current state of the connection.
     fn is_closed(&self) -> bool;
 
+    /// Return whether the stream is a relay stream.
+    fn is_relay(&self) -> bool;
+
     /// Returns the remote address of the connection.
     fn remote_address(&self) -> SocketAddr;
 }
@@ -384,6 +390,9 @@ pub trait FoctetRecvStream {
 
     /// Returns the current state of the connection.
     fn is_closed(&self) -> bool;
+
+    /// Return whether the stream is a relay stream.
+    fn is_relay(&self) -> bool;
 
     /// Returns the remote address of the connection.
     fn remote_address(&self) -> SocketAddr;
@@ -468,6 +477,14 @@ impl FoctetSendStream for SendStream {
         }
     }
 
+    /// Return whether the stream is a relay stream.
+    fn is_relay(&self) -> bool {
+        match self {
+            SendStream::Quic(stream) => stream.is_relay(),
+            SendStream::Tcp(stream) => stream.is_relay(),
+        }
+    }
+
     /// Returns the remote address of the connection.
     fn remote_address(&self) -> SocketAddr {
         match self {
@@ -545,6 +562,14 @@ impl FoctetRecvStream for RecvStream {
         match self {
             RecvStream::Quic(stream) => stream.is_closed(),
             RecvStream::Tcp(stream) => stream.is_closed(),
+        }
+    }
+
+    /// Return whether the stream is a relay stream.
+    fn is_relay(&self) -> bool {
+        match self {
+            RecvStream::Quic(stream) => stream.is_relay(),
+            RecvStream::Tcp(stream) => stream.is_relay(),
         }
     }
 
@@ -667,6 +692,13 @@ impl FoctetStream for NetworkStream {
         match self {
             NetworkStream::Quic(stream) => stream.is_closed(),
             NetworkStream::Tcp(stream) => stream.is_closed(),
+        }
+    }
+
+    fn is_relay(&self) -> bool {
+        match self {
+            NetworkStream::Quic(stream) => stream.is_relay(),
+            NetworkStream::Tcp(stream) => stream.is_relay(),
         }
     }
 

@@ -135,6 +135,10 @@ impl FoctetSendStream for TlsTcpSendStream {
         self.is_closed
     }
 
+    fn is_relay(&self) -> bool {
+        self.is_relay
+    }
+
     fn remote_address(&self) -> SocketAddr {
         self.remote_address
     }
@@ -243,6 +247,10 @@ impl FoctetRecvStream for TlsTcpRecvStream {
 
     fn is_closed(&self) -> bool {
         self.is_closed
+    }
+
+    fn is_relay(&self) -> bool {
+        self.is_relay
     }
 
     fn remote_address(&self) -> SocketAddr {
@@ -505,6 +513,10 @@ impl FoctetStream for TlsTcpStream {
 
     fn is_closed(&self) -> bool {
         self.is_closed
+    }
+
+    fn is_relay(&self) -> bool {
+        self.is_relay
     }
 
     fn remote_address(&self) -> SocketAddr {
