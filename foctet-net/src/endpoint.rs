@@ -299,13 +299,26 @@ impl Endpoint {
         let quic_socket = self.quic_socket.clone();
         let tcp_socket = self.tcp_socket.clone();
         let cancellation_token = self.cancellation_token.clone();
+        let direct_stream_sender = sender.clone();
         tokio::spawn(async move {
-            match start_listen_task(quic_socket, tcp_socket, cancellation_token, sender).await {
+            match start_listen_task(quic_socket, tcp_socket, cancellation_token, direct_stream_sender).await {
                 Ok(_) => {
                     tracing::info!("Endpoint listener stopped.");
                 }
                 Err(e) => {
                     tracing::error!("Error starting listener: {:?}", e);
+                }
+            }
+        });
+        let relay_client = self.relay_client.clone();
+        let cancellation_token = self.cancellation_token.clone();
+        tokio::spawn(async move {
+            match start_relay_listen_task(relay_client, cancellation_token, sender).await {
+                Ok(_) => {
+                    tracing::info!("Relay listener stopped.");
+                }
+                Err(e) => {
+                    tracing::error!("Error starting relay listener: {:?}", e);
                 }
             }
         });
@@ -413,5 +426,13 @@ async fn start_listen_task(quic_socket: QuicSocket, tcp_socket: TcpSocket, cance
             }
         }
     }
+    Ok(())
+}
+
+async fn start_relay_listen_task(relay_client: RelayClient, cancellation_token: CancellationToken, sender: mpsc::Sender<NetworkStream>) -> Result<()> {
+    let mut relay_client = relay_client;
+    let control_stream = relay_client.open_control_stream().await?;
+    // TODO: Handle control stream
+    // monitor control stream for incomming relay connect requests
     Ok(())
 }
