@@ -14,6 +14,7 @@ use crate::connection::NetworkStream;
 use crate::relay::client::RelayClient;
 use anyhow::Result;
 use anyhow::anyhow;
+use foctet_core::frame::FrameType;
 use foctet_core::node::NodeAddr;
 use foctet_core::node::NodeId;
 use tokio::sync::mpsc;
@@ -431,8 +432,44 @@ async fn start_listen_task(quic_socket: QuicSocket, tcp_socket: TcpSocket, cance
 
 async fn start_relay_listen_task(relay_client: RelayClient, cancellation_token: CancellationToken, sender: mpsc::Sender<NetworkStream>) -> Result<()> {
     let mut relay_client = relay_client;
-    let control_stream = relay_client.open_control_stream().await?;
-    // TODO: Handle control stream
-    // monitor control stream for incomming relay connect requests
+    let mut control_stream = relay_client.open_control_stream().await?;
+    
+    loop {
+        tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                tracing::info!("Client actor loop cancelled, closing loop");
+                break;
+            }
+            result = control_stream.receive_frame() => match result {
+                Ok(frame) => {
+                    match frame.frame_type {
+                        FrameType::Connect => {
+                            if let Some(relay_addr) = &relay_client.node_addr.relay_addr {
+                                match relay_client.connect(NodeId::zero(), relay_addr.clone()).await {
+                                    Ok(stream) => {
+                                        match sender.send(stream).await {
+                                            Ok(_) => {}
+                                            Err(e) => {
+                                                tracing::error!("Error sending stream: {:?}", e);
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        tracing::error!("Error connecting to relay: {:?}", e);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            tracing::warn!("Received unexpected frame type");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Error receiving frame: {:?}", e);
+                }
+            }           
+        }
+    }
     Ok(())
 }
