@@ -15,6 +15,7 @@ use crate::relay::client::RelayClient;
 use anyhow::Result;
 use anyhow::anyhow;
 use foctet_core::frame::FrameType;
+use foctet_core::frame::Payload;
 use foctet_core::node::NodeAddr;
 use foctet_core::node::NodeId;
 use tokio::sync::mpsc;
@@ -297,12 +298,32 @@ impl Endpoint {
     /// Returns a [`Listener`] that can be used to accept incoming streams.
     pub async fn listen(&mut self) -> Result<Listener> {
         let (sender, receiver) = mpsc::channel::<NetworkStream>(100);
+
+        // Start the relay listener if a relay address is available
+        if self.node_addr.relay_addr.is_some() {
+            let relay_client = self.relay_client.clone();
+            let cancellation_token = self.cancellation_token.clone();
+            let relay_stream_sender = sender.clone();
+            tokio::spawn(async move {
+                match start_relay_listen_task(relay_client, cancellation_token, relay_stream_sender).await {
+                    Ok(_) => {
+                        tracing::info!("Relay listener stopped.");
+                    }
+                    Err(e) => {
+                        tracing::error!("Error starting relay listener: {:?}", e);
+                    }
+                }
+            });
+        } else {
+            tracing::warn!("Relay address not found. skipping relay listener.");
+        }
+
+        // Start the QUIC and TCP listeners for direct connections
         let quic_socket = self.quic_socket.clone();
         let tcp_socket = self.tcp_socket.clone();
         let cancellation_token = self.cancellation_token.clone();
-        let direct_stream_sender = sender.clone();
         tokio::spawn(async move {
-            match start_listen_task(quic_socket, tcp_socket, cancellation_token, direct_stream_sender).await {
+            match start_listen_task(quic_socket, tcp_socket, cancellation_token, sender).await {
                 Ok(_) => {
                     tracing::info!("Endpoint listener stopped.");
                 }
@@ -311,19 +332,7 @@ impl Endpoint {
                 }
             }
         });
-        let relay_client = self.relay_client.clone();
-        let cancellation_token = self.cancellation_token.clone();
-        tokio::spawn(async move {
-            match start_relay_listen_task(relay_client, cancellation_token, sender).await {
-                Ok(_) => {
-                    tracing::info!("Relay listener stopped.");
-                }
-                Err(e) => {
-                    tracing::error!("Error starting relay listener: {:?}", e);
-                }
-            }
-        });
-        //self.start_listen_task(sender).await?;
+        
         Ok(Listener { receiver })
     }
     /// Remove stale or unused QUIC connections from the connection pool.
@@ -431,6 +440,10 @@ async fn start_listen_task(quic_socket: QuicSocket, tcp_socket: TcpSocket, cance
 }
 
 async fn start_relay_listen_task(relay_client: RelayClient, cancellation_token: CancellationToken, sender: mpsc::Sender<NetworkStream>) -> Result<()> {
+    let relay_addr = match &relay_client.node_addr.relay_addr {
+        Some(addr) => addr.clone(),
+        None => return Err(anyhow!("Relay address not found")),
+    };
     let mut relay_client = relay_client;
     let mut control_stream = relay_client.open_control_stream().await?;
     
@@ -444,18 +457,25 @@ async fn start_relay_listen_task(relay_client: RelayClient, cancellation_token: 
                 Ok(frame) => {
                     match frame.frame_type {
                         FrameType::Connect => {
-                            if let Some(relay_addr) = &relay_client.node_addr.relay_addr {
-                                match relay_client.connect(NodeId::zero(), relay_addr.clone()).await {
-                                    Ok(stream) => {
-                                        match sender.send(stream).await {
-                                            Ok(_) => {}
+                            if let Some(payload) = frame.payload {
+                                match payload {
+                                    Payload::Handshake(handshake) => {
+                                        match relay_client.connect(handshake.dst_node_id, relay_addr.clone()).await {
+                                            Ok(stream) => {
+                                                match sender.send(stream).await {
+                                                    Ok(_) => {}
+                                                    Err(e) => {
+                                                        tracing::error!("Error sending stream: {:?}", e);
+                                                    }
+                                                }
+                                            },
                                             Err(e) => {
-                                                tracing::error!("Error sending stream: {:?}", e);
+                                                tracing::error!("Error connecting to relay: {:?}", e);
                                             }
                                         }
-                                    },
-                                    Err(e) => {
-                                        tracing::error!("Error connecting to relay: {:?}", e);
+                                    }
+                                    _ => {
+                                        tracing::warn!("Received unexpected payload type");
                                     }
                                 }
                             }
