@@ -14,6 +14,7 @@ use crate::connection::NetworkStream;
 use crate::relay::client::RelayClient;
 use anyhow::Result;
 use anyhow::anyhow;
+use foctet_core::error::StreamError;
 use foctet_core::frame::FrameType;
 use foctet_core::frame::Payload;
 use foctet_core::node::NodeAddr;
@@ -408,11 +409,17 @@ async fn start_listen_task(quic_socket: QuicSocket, tcp_socket: TcpSocket, cance
     });
     loop {
         tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                tracing::info!("Endpoint listener cancelled.");
+                break;
+            }
             Some(mut conn) = quic_conn_rx.recv() => {
+                tracing::info!("Accepted QUIC connection from: {}", conn.remote_address());
                 let sender = sender.clone();
                 tokio::spawn(async move {
                     match conn.accept_stream().await {
                         Ok(stream) => {
+                            tracing::info!("Accepted QUIC stream from: {}", stream.remote_address());
                             let stream = NetworkStream::Quic(stream);
                             if let Err(e) = sender.send(stream).await {
                                 tracing::error!("Error sending QUIC stream: {:?}", e);
@@ -425,14 +432,11 @@ async fn start_listen_task(quic_socket: QuicSocket, tcp_socket: TcpSocket, cance
                 });
             }
             Some(conn) = tcp_conn_rx.recv() => {
+                tracing::info!("Accepted TCP connection from: {}", conn.remote_address());
                 let stream = NetworkStream::Tcp(conn);
                 if let Err(e) = sender.send(stream).await {
                     tracing::error!("Error sending TCP connection: {:?}", e);
                 }
-            }
-            _ = cancellation_token.cancelled() => {
-                tracing::info!("Endpoint listener cancelled.");
-                break;
             }
         }
     }
@@ -445,8 +449,10 @@ async fn start_relay_listen_task(relay_client: RelayClient, cancellation_token: 
         None => return Err(anyhow!("Relay address not found")),
     };
     let mut relay_client = relay_client;
+    tracing::info!("Opening relay control stream...");
     let mut control_stream = relay_client.open_control_stream().await?;
-    
+    tracing::info!("Relay control stream opened.");
+
     loop {
         tokio::select! {
             _ = cancellation_token.cancelled() => {
@@ -487,6 +493,20 @@ async fn start_relay_listen_task(relay_client: RelayClient, cancellation_token: 
                 }
                 Err(e) => {
                     tracing::error!("Error receiving frame: {:?}", e);
+                    // Check if the stream is closed
+                    if let Some(e) = e.downcast_ref::<StreamError>() {
+                        match e {
+                            StreamError::Closed => {
+                                tracing::info!("Relay control stream closed");
+                                break;
+                            }
+                            _ => {
+                                tracing::warn!("Error receiving frame: {:?}", e);
+                            }
+                        }
+                    } else {
+                        tracing::warn!("Error receiving frame: {:?}", e);
+                    }
                 }
             }           
         }

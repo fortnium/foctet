@@ -142,9 +142,9 @@ impl Server {
         // Create a relay server
         let relay_server = RelayServer::spawn(config.relay_config())?;
         let relay_handle = relay_server.handle();
-
+        tracing::info!("Starting relay task...");
         let server_handle = AbortOnDropHandle::new(tokio::spawn(run_server_task(listener, relay_server)));
-        
+        tracing::info!("Waiting for incoming connections...");
         Ok(Self {
             endpoint_handle,
             relay_handle,
@@ -162,6 +162,7 @@ impl Server {
 }
 
 async fn run_server_task(mut listener: Listener, relay_server: RelayServer) -> Result<()> {
+    tracing::info!("Starting connection handler...");
     // Handle incoming streams
     let sender = relay_server.server_channel_sender();
     while let Some(stream) = listener.accept().await {

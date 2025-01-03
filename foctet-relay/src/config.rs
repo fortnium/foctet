@@ -1,5 +1,5 @@
 use foctet::core::default::{DEFAULT_RELAY_PACKET_QUEUE_CAPACITY, DEFAULT_RELAY_SERVER_CHANNEL_CAPACITY};
-use foctet::core::node::{NodeAddr, NodeId};
+use foctet::core::node::{NodeAddr, NodeId, RelayAddr};
 use foctet::net::config::EndpointConfig;
 
 #[derive(Debug, Clone)]
@@ -53,6 +53,11 @@ impl ServerConfig {
     pub fn node_addr(&self) -> NodeAddr {
         NodeAddr::new(self.node_id.clone())
             .with_server_name(self.server_name.clone())
+            .with_socket_addresses(self.endpoint_config.server_addresses.clone())
+    }
+
+    pub fn relay_addr(&self) -> RelayAddr {
+        RelayAddr::new(self.node_id.clone())
             .with_socket_addresses(self.endpoint_config.server_addresses.clone())
     }
 

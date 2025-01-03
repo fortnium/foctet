@@ -97,6 +97,11 @@ impl NodeAddr {
         self.relay_addr = Some(relay_addr);
         self
     }
+    /// Set relay address option.
+    pub fn with_relay_option(mut self, relay_addr: Option<RelayAddr>) -> Self {
+        self.relay_addr = relay_addr;
+        self
+    }
     /// Create a unspecifed node address with zero node ID and unspecified socket address.
     pub fn unspecified() -> Self {
         Self {
@@ -110,14 +115,14 @@ impl NodeAddr {
     pub fn is_unspecified(&self) -> bool {
         self.node_id.is_zero()
     }
-    /// Converts a RFC4648 base32 string into a ContentId.
+    /// Converts a RFC4648 base32 string into a NodeAddr.
     pub fn from_base32(encoded: &str) -> Result<Self> {
         let decoded = base32::decode(Alphabet::Rfc4648 { padding: false }, encoded)
             .ok_or_else(|| anyhow::anyhow!("Failed to decode base32 string"))?;
         let node_addr: Self = bincode::deserialize(&decoded)?;
         Ok(node_addr)
     }
-    /// Converts the ContentId to a single RFC4648 base32 string.
+    /// Converts the NodeAddr to a single RFC4648 base32 string.
     pub fn to_base32(&self) -> Result<String> {
         let serialized = bincode::serialize(self)?;
         Ok(base32::encode(Alphabet::Rfc4648 { padding: false }, &serialized))
@@ -159,30 +164,30 @@ impl NodeAddr {
 pub struct SessionId([u8; UUID_V4_BYTES_LEN]);
 
 impl SessionId {
-    /// Create a new connection ID with the given string.
+    /// Create a new SessionId with the given string.
     pub fn new() -> Self {
         Self(key::generate_uuid_v4_bytes())
     }
-    /// Create an zero connection ID.
+    /// Create an zero session ID.
     pub fn zero() -> Self {
         Self([0; UUID_V4_BYTES_LEN])
     }
-    /// Get the connection ID as a string slice.
+    /// Get the session ID as a string slice.
     pub fn as_str(&self) -> &str {
         std::str::from_utf8(&self.0).unwrap_or_default()
     }
-    /// Check if the connection ID is empty.
+    /// Check if the session ID is empty.
     pub fn is_zero(&self) -> bool {
         self.0.iter().all(|&x| x == 0)
     }
-    /// Converts a RFC4648 base32 string into a ContentId.
+    /// Converts a RFC4648 base32 string into a SessionId.
     pub fn from_base32(encoded: &str) -> Result<Self> {
         let decoded = base32::decode(Alphabet::Rfc4648 { padding: false }, encoded)
             .ok_or_else(|| anyhow::anyhow!("Failed to decode base32 string"))?;
-        let node_addr: Self = bincode::deserialize(&decoded)?;
-        Ok(node_addr)
+        let session_id: Self = bincode::deserialize(&decoded)?;
+        Ok(session_id)
     }
-    /// Converts the ContentId to a single RFC4648 base32 string.
+    /// Converts the SessionId to a single RFC4648 base32 string.
     pub fn to_base32(&self) -> Result<String> {
         let serialized = bincode::serialize(self)?;
         Ok(base32::encode(Alphabet::Rfc4648 { padding: false }, &serialized))
@@ -253,6 +258,18 @@ impl RelayAddr {
     /// Check if the node address is unspecified.
     pub fn is_unspecified(&self) -> bool {
         self.relay_node_id.is_zero()
+    }
+    /// Converts a RFC4648 base32 string into a RelayAddr.
+    pub fn from_base32(encoded: &str) -> Result<Self> {
+        let decoded = base32::decode(Alphabet::Rfc4648 { padding: false }, encoded)
+            .ok_or_else(|| anyhow::anyhow!("Failed to decode base32 string"))?;
+        let relay_addr: Self = bincode::deserialize(&decoded)?;
+        Ok(relay_addr)
+    }
+    /// Converts the RelayAddr to a single RFC4648 base32 string.
+    pub fn to_base32(&self) -> Result<String> {
+        let serialized = bincode::serialize(self)?;
+        Ok(base32::encode(Alphabet::Rfc4648 { padding: false }, &serialized))
     }
     /// Get the server name
     pub fn get_server_name(&self) -> String {

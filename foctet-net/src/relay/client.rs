@@ -15,7 +15,7 @@ pub struct RelayClient {
 impl RelayClient {
     /// Create a new `RelayClient` with the given node address and configuration.
     pub fn new(node_addr: NodeAddr, config: EndpointConfig) -> Result<Self> {
-        let quic_socket = QuicSocket::new_client(node_addr.node_id.clone(),  config.clone())?;
+        let quic_socket = QuicSocket::new_client(node_addr.node_id.clone(), config.clone())?;
         let tcp_socket = TcpSocket::new(node_addr.node_id.clone(), config.clone())?;
         Ok(Self {
             node_addr,
@@ -45,11 +45,13 @@ impl RelayClient {
     }
     pub async fn open_control_stream_quic(&mut self, relay_addr: RelayAddr) -> Result<NetworkStream> {
         let mut conn = self.quic_socket.connect_relay(relay_addr).await?;
-        let stream = conn.open_stream().await?;
+        let mut stream = conn.open_stream().await?;
+        stream.handshake(NodeId::zero(),None).await?;
         Ok(NetworkStream::Quic(stream))
     }
     pub async fn open_control_stream_tcp(&mut self, relay_addr: RelayAddr) -> Result<NetworkStream> {
-        let stream = self.tcp_socket.connect_relay(relay_addr).await?;
+        let mut stream = self.tcp_socket.connect_relay(relay_addr).await?;
+        stream.handshake(NodeId::zero(),None).await?;
         Ok(NetworkStream::Tcp(stream))
     }
     pub async fn connect(&mut self, dst_node_addr: NodeId, relay_addr: RelayAddr) -> Result<NetworkStream> {

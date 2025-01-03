@@ -829,6 +829,7 @@ impl QuicSocket {
                         Some(incoming_connection) => {
                             match incoming_connection.await {
                                 Ok(connection) => {
+                                    tracing::info!("Accepted connection from {}", connection.remote_address());
                                     let quic_connection = QuicConnection::new(self.node_id.clone(), connection, &self.config);
                                     if sender.send(quic_connection).await.is_err() {
                                         tracing::warn!("Failed to send QuicConnection to the channel");

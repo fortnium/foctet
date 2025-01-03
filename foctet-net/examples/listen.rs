@@ -1,5 +1,5 @@
 use std::{collections::BTreeSet, net::SocketAddr, path::PathBuf};
-use foctet_core::{frame::{Frame, FrameType, Payload}, node::{NodeAddr, NodeId}};
+use foctet_core::{frame::{Frame, FrameType, Payload}, node::{NodeAddr, NodeId, RelayAddr}};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 use clap::Parser;
@@ -48,6 +48,14 @@ struct Args {
     /// Insecure mode to use self-signed certificate and skip certificate verification.
     #[arg(short, long, help = "Insecure mode to use self-signed certificate and skip certificate verification.")]
     insecure: bool,
+
+    /// The base32 relay node address to connect to.
+    #[arg(
+        short = 'r',
+        long = "relay",
+        help = "The base32 relay node address to connect to."
+    )]
+    relay: Option<String>,
 }
 
 #[tokio::main]
@@ -72,10 +80,18 @@ async fn main() -> Result<()> {
         server_addrs.insert(args.server_addr);
     }
 
+    let relay_addr = if let Some(relay_addr_base32) = args.relay {
+        let relay_addr = RelayAddr::from_base32(&relay_addr_base32)?;
+        Some(relay_addr)
+    } else {
+        None
+    };
+
     let node_id = NodeId::generate();
     let node_addr = NodeAddr::new(node_id)
     .with_server_name(args.server_name.clone())
-    .with_socket_addresses(server_addrs);
+    .with_socket_addresses(server_addrs)
+    .with_relay_option(relay_addr);
 
     // Create a new server endpoint
     let mut endpoint = Endpoint::builder()
@@ -85,6 +101,7 @@ async fn main() -> Result<()> {
         .with_cert_path_option(args.cert_path)
         .with_key_path_option(args.key_path)
         .with_insecure(args.insecure)
+        .with_include_loopback(true)
         .build().await?;
 
     tracing::info!("Server listening on {}", args.server_addr);

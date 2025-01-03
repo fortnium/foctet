@@ -26,6 +26,11 @@ struct ClientActor {
 
 impl ClientActor {
     async fn run(mut self, cancel: CancellationToken) -> Result<()> {
+        if self.dst_node_id.is_zero() {
+            tracing::info!("Starting relay control actor loop for {:?}", self.src_node_id);
+        } else {
+            tracing::info!("Starting relay client actor loop for {:?} -> {:?}", self.src_node_id, self.dst_node_id);
+        }
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => {

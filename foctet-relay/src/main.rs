@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
 
     // TODO: Add support for config file.
     let node_id = NodeId::generate();
-    let endpoint_config = EndpointConfig::new()
+    let endpoint_config: EndpointConfig = EndpointConfig::new()
         .with_server_addr(args.server_addr)
         .with_cert_path_option(args.cert_path)
         .with_key_path_option(args.key_path)
@@ -101,9 +101,12 @@ async fn main() -> Result<()> {
         .with_packet_queue_capacity(args.packet_queue_capacity)
         .with_server_channel_capacity(args.server_channel_capacity);
 
+    tracing::info!("Relay Node Addr: {:?}", config.relay_addr().to_base32());
+
     let mut server = server::Server::spawn(config).await?;
 
     tracing::info!("Server listening on {}", args.server_addr);
+    tracing::info!("Press Ctrl+C to shutdown the server...");
 
     tokio::select! {
         biased;
