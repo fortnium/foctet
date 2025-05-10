@@ -1,0 +1,24 @@
+[package]
+name = "foctet-mux"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Multiplexer for Foctet, enabling multiple streams over a single connection."
+repository = "https://github.com/fortnium/foctet"
+readme = "../README.md"
+license = "MIT"
+
+[dependencies]
+foctet-core = { workspace = true }
+anyhow = { workspace = true }
+bytes = { workspace = true }
+bincode = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true, features = ["rt", "io-util", "time", "macros"] }
+tokio-util = { workspace = true, features = ["rt", "codec"] }
+tracing = { workspace = true }
+nohash-hasher = "0.2"
+futures-timer = { version = "3.0", optional = true }
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+web-time = "1.1.0"

@@ -1,0 +1,13 @@
+[package]
+name = "foctet"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "A Multiplexed peer-to-peer networking framework"
+repository = "https://github.com/fortnium/foctet"
+readme = "../README.md"
+license = "MIT"
+
+[dependencies]
+foctet-core = { workspace = true }
+foctet-net = { workspace = true }
