@@ -28,6 +28,3 @@ All communications between peers are secured using `rustls`, providing robust co
     - During the TLS handshake, Foctet verifies that the `NodeId` derived from the certificate matches the intended `NodeId`.
 - Authentication:
     - Both client and server verify each other's certificate to ensure that the expected `NodeId` matches the certificate content.
-
-## License
-Foctet is licensed under the MIT License. See `LICENSE` for more information.
