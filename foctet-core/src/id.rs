@@ -14,11 +14,11 @@ pub type NodeId = PublicKey;
 
 /// The unique identifier for a connection or content in the foctet network.
 /// 128-bit UUID (Universally Unique Identifier) v4 is used.
-#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Serialize, Deserialize, Encode, Decode, Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct UuidV4([u8; UUID_V4_BYTES_LEN]);
 
 impl UuidV4 {
-    /// Create a new connection ID with the given string.
+    /// Create a new random UUID.
     pub fn new() -> Self {
         let unique_id: Uuid = Uuid::new_v4();
         let mut id = [0u8; UUID_V4_BYTES_LEN];
