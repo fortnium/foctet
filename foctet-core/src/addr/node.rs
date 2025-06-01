@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::{id::NodeId, transport::TransportKind};
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use stackaddr::{segment::protocol::TransportProtocol, StackAddr};
 
@@ -20,6 +21,21 @@ pub struct NodeAddr {
 }
 
 impl NodeAddr {
+    /// Decodes a NodeAddr from a bytes. 
+    pub fn from_bytes(bytes: Bytes) -> Result<Self> {
+        let node_addr: Self = match bincode::serde::decode_from_slice(&bytes, bincode::config::standard()) {
+            Ok((node_addr, _)) => node_addr,
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to decode NodeAddr: {}", e));
+            },
+        };
+        Ok(node_addr)
+    }
+    /// Encodes a NodeAddr to bytes.
+    pub fn to_bytes(&self) -> Result<Bytes> {
+        let serialized = bincode::serde::encode_to_vec(self, bincode::config::standard())?;
+        Ok(Bytes::from(serialized))
+    }
     /// Converts a RFC4648 base32 string into a NodeAddr.
     pub fn from_base32(encoded: &str) -> Result<Self> {
         let decoded = base32::decode(Alphabet::Rfc4648 { padding: false }, encoded)

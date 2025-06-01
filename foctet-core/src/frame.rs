@@ -181,6 +181,12 @@ pub enum FrameType {
     FileMeta = 3,
     FileData = 4,
     ContentRequest = 5,
+    Ping = 6,
+    Pong = 7,
+    RegisterRequest = 8,
+    RegisterResponse = 9,
+    TunnelRequest = 10,
+    TunnelResponse = 11,
     Reserved(u8),
 }
 
@@ -193,6 +199,12 @@ impl From<u8> for FrameType {
             3 => FrameType::FileMeta,
             4 => FrameType::FileData,
             5 => FrameType::ContentRequest,
+            6 => FrameType::Ping,
+            7 => FrameType::Pong,
+            8 => FrameType::RegisterRequest,
+            9 => FrameType::RegisterResponse,
+            10 => FrameType::TunnelRequest,
+            11 => FrameType::TunnelResponse,
             other => FrameType::Reserved(other),
         }
     }
@@ -207,6 +219,12 @@ impl From<FrameType> for u8 {
             FrameType::FileMeta => 3,
             FrameType::FileData => 4,
             FrameType::ContentRequest => 5,
+            FrameType::Ping => 6,
+            FrameType::Pong => 7,
+            FrameType::RegisterRequest => 8,
+            FrameType::RegisterResponse => 9,
+            FrameType::TunnelRequest => 10,
+            FrameType::TunnelResponse => 11,
             FrameType::Reserved(other) => other,
         }
     }

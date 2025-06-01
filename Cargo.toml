@@ -5,6 +5,7 @@ members = [
     "foctet-core", 
     "foctet-mux",
     "foctet-net", 
+    "foctet-relay", 
 ]
 
 [workspace.package]
