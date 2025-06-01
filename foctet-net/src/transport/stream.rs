@@ -3,8 +3,9 @@ use bytes::{Bytes, BytesMut};
 use foctet_core::{frame::Frame, stream::StreamId};
 use std::{future::Future, path::Path};
 use tokio::io::{AsyncRead, AsyncWrite};
-
-use super::{quic::stream::QuicStream, tcp::stream::LogicalTcpStream};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use super::{quic::stream::{QuicRecvStream, QuicSendStream, QuicStream}, tcp::stream::{LogicalTcpRecvStream, LogicalTcpSendStream, LogicalTcpStream}};
 
 pub trait SendStreamHandle: AsyncWrite + Unpin + Send {
     fn stream_id(&self) -> StreamId;
@@ -31,6 +32,62 @@ pub trait StreamHandle: AsyncRead + AsyncWrite + Unpin + Send {
     fn send_file(&mut self, file_path: &Path) -> impl Future<Output = Result<()>> + Send;
     fn receive_file(&mut self, file_path: &Path, len: usize) -> impl Future<Output = Result<usize>> + Send;
     fn close(&mut self) -> impl Future<Output = Result<()>> + Send;
+}
+
+pub enum SendStream {
+    Quic(QuicSendStream),
+    Tcp(LogicalTcpSendStream),
+}
+
+impl AsyncWrite for SendStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            SendStream::Quic(send) => Pin::new(send).poll_write(cx, buf),
+            SendStream::Tcp(send) => Pin::new(send).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            SendStream::Quic(send) => Pin::new(send).poll_flush(cx),
+            SendStream::Tcp(send) => Pin::new(send).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            SendStream::Quic(send) => Pin::new(send).poll_shutdown(cx),
+            SendStream::Tcp(send) => Pin::new(send).poll_shutdown(cx),
+        }
+    }
+}
+
+pub enum RecvStream {
+    Quic(QuicRecvStream),
+    Tcp(LogicalTcpRecvStream),
+}
+
+impl AsyncRead for RecvStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            RecvStream::Quic(recv) => Pin::new(recv).poll_read(cx, buf),
+            RecvStream::Tcp(recv) => Pin::new(recv).poll_read(cx, buf),
+        }
+    }
 }
 
 pub enum Stream {
@@ -85,6 +142,58 @@ impl Stream {
         match self {
             Stream::Quic(stream) => stream.close().await,
             Stream::Tcp(stream) => stream.close().await,
+        }
+    }
+    pub fn split(self) -> (SendStream, RecvStream) {
+        match self {
+            Stream::Quic(stream) => {
+                let (send_stream, recv_stream) = stream.split();
+                (SendStream::Quic(send_stream), RecvStream::Quic(recv_stream))
+            },
+            Stream::Tcp(stream) => {
+                let (send_stream, recv_stream) = stream.split();
+                (SendStream::Tcp(send_stream), RecvStream::Tcp(recv_stream))
+            },
+        }
+    }
+}
+
+impl AsyncRead for Stream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Stream::Quic(stream) => Pin::new(stream).poll_read(cx, buf),
+            Stream::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for Stream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            Stream::Quic(stream) => Pin::new(stream).poll_write(cx, buf),
+            Stream::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Stream::Quic(stream) => Pin::new(stream).poll_flush(cx),
+            Stream::Tcp(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Stream::Quic(stream) => Pin::new(stream).poll_shutdown(cx),
+            Stream::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }
 }
