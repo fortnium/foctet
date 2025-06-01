@@ -1,33 +1,24 @@
 use std::fmt;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use crate::{addr::node::NodeAddr, id::NodeId};
+use crate::{addr::node::NodeAddr, id::{NodeId, UuidV4}};
 use anyhow::Result;
 
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct TunnelId(pub u32);
+pub struct TunnelId(pub UuidV4);
 
 impl TunnelId {
-    pub fn new(id: u32) -> Self {
-        Self(id)
+    pub fn new() -> Self {
+        Self(UuidV4::new())
     }
-    pub fn id(&self) -> u32 {
+    pub fn id(&self) -> UuidV4 {
         self.0
-    }
-    pub fn next(&self) -> Self {
-        TunnelId(self.0.checked_add(1).unwrap_or(0))
-    }
-    /// Adds to the current value, returning the previous value.
-    pub fn fetch_add(&mut self, n: u32) -> Self {
-        let old = self.0;
-        self.0 = self.0.checked_add(n).unwrap_or(0);
-        TunnelId(old)
     }
 }
 
 impl fmt::Display for TunnelId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.0.to_hex())
     }
 }
 
@@ -67,13 +58,13 @@ impl RegisterResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TunnelRequest {
+pub struct TunnelInfo {
     pub src_node: NodeId,
     pub dst_node: NodeId,
     pub tunnel_id: TunnelId,
 }
 
-impl TunnelRequest {
+impl TunnelInfo {
     pub fn new(src_node: NodeId, dst_node: NodeId, tunnel_id: TunnelId) -> Self {
         Self {
             src_node,
@@ -92,24 +83,19 @@ impl TunnelRequest {
     }
 }
 
-impl fmt::Display for TunnelRequest {
+impl fmt::Display for TunnelInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "TunnelRequest(src_node: {}, dst_node: {})", self.src_node, self.dst_node)
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TunnelResponse {
-    pub success: bool,
-    pub tunnel_id: TunnelId,
-    pub reason: Option<String>,
+pub enum TunnelRequest {
+    Create(TunnelInfo),
+    Close(TunnelId),
 }
 
-impl TunnelResponse {
-    pub fn new(success: bool, tunnel_id: TunnelId, reason: Option<String>) -> Self {
-        Self { success, tunnel_id, reason }
-    }
-
+impl TunnelRequest {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let (msg, _len) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
         Ok(msg)
@@ -120,8 +106,20 @@ impl TunnelResponse {
     }
 }
 
-impl fmt::Display for TunnelResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TunnelResponse(success: {}, tunnel_id: {}, reason: {:?})", self.success, self.tunnel_id, self.reason)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TunnelResponse {
+    Created(TunnelId),
+    Closed(TunnelId),
+    Error(String),
+}
+
+impl TunnelResponse {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let (msg, _len) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+        Ok(msg)
+    }
+
+    pub fn to_bytes(&self) -> Result<Bytes> {
+        Ok(Bytes::from(bincode::serde::encode_to_vec(self, bincode::config::standard())?))
     }
 }

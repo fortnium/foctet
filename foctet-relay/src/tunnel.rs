@@ -8,14 +8,14 @@ pub struct Tunnel {
     pub dst_stream: Stream,
 }
 
-pub struct TunnelInfo {
+pub struct TunnelStat {
     pub src_node: NodeId,
     pub dst_node: NodeId,
     pub incoming_traffic: u64,
     pub outgoing_traffic: u64,
 }
 
-impl TunnelInfo {
+impl TunnelStat {
     pub fn new(src_node: NodeId, dst_node: NodeId) -> Self {
         Self {
             src_node,

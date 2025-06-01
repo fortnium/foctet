@@ -8,7 +8,7 @@ use std::future::Future;
 
 use anyhow::Result;
 use connection::{Connection, ConnectionEvent};
-use foctet_core::transport::ListenerId;
+use foctet_core::transport::{ListenerId, TransportKind};
 use quic::transport::QuicTransport;
 use stackaddr::StackAddr;
 use tcp::transport::TcpTransport;
@@ -79,6 +79,12 @@ pub enum Transport {
 }
 
 impl Transport {
+    pub fn transport_kind(&self) -> TransportKind {
+        match self {
+            Self::Quic(_) => TransportKind::Quic,
+            Self::Tcp(_) => TransportKind::TlsOverTcp,
+        }
+    }
     pub async fn listen_on(
         &mut self,
         id: ListenerId,

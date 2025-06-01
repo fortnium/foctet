@@ -39,6 +39,43 @@ pub enum SendStream {
     Tcp(LogicalTcpSendStream),
 }
 
+impl SendStream {
+    pub fn stream_id(&self) -> StreamId {
+        match self {
+            SendStream::Quic(send) => send.stream_id(),
+            SendStream::Tcp(send) => send.stream_id(),
+        }
+    }
+
+    pub async fn send(&mut self, data: Bytes) -> Result<()> {
+        match self {
+            SendStream::Quic(send) => send.send(data).await,
+            SendStream::Tcp(send) => send.send(data).await,
+        }
+    }
+
+    pub async fn send_frame(&mut self, frame: Frame) -> Result<()> {
+        match self {
+            SendStream::Quic(send) => send.send_frame(frame).await,
+            SendStream::Tcp(send) => send.send_frame(frame).await,
+        }
+    }
+
+    pub async fn send_file(&mut self, file_path: &Path) -> Result<()> {
+        match self {
+            SendStream::Quic(send) => send.send_file(file_path).await,
+            SendStream::Tcp(send) => send.send_file(file_path).await,
+        }
+    }
+
+    pub async fn close(&mut self) -> Result<()> {
+        match self {
+            SendStream::Quic(send) => send.close().await,
+            SendStream::Tcp(send) => send.close().await,
+        }
+    }
+}
+
 impl AsyncWrite for SendStream {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -75,6 +112,43 @@ impl AsyncWrite for SendStream {
 pub enum RecvStream {
     Quic(QuicRecvStream),
     Tcp(LogicalTcpRecvStream),
+}
+
+impl RecvStream {
+    pub fn stream_id(&self) -> StreamId {
+        match self {
+            RecvStream::Quic(recv) => recv.stream_id(),
+            RecvStream::Tcp(recv) => recv.stream_id(),
+        }
+    }
+
+    pub async fn receive(&mut self) -> Result<BytesMut> {
+        match self {
+            RecvStream::Quic(recv) => recv.receive().await,
+            RecvStream::Tcp(recv) => recv.receive().await,
+        }
+    }
+
+    pub async fn receive_frame(&mut self) -> Result<Frame> {
+        match self {
+            RecvStream::Quic(recv) => recv.receive_frame().await,
+            RecvStream::Tcp(recv) => recv.receive_frame().await,
+        }
+    }
+
+    pub async fn receive_file(&mut self, file_path: &Path, len: usize) -> Result<usize> {
+        match self {
+            RecvStream::Quic(recv) => recv.receive_file(file_path, len).await,
+            RecvStream::Tcp(recv) => recv.receive_file(file_path, len).await,
+        }
+    }
+
+    pub async fn close(&mut self) -> Result<()> {
+        match self {
+            RecvStream::Quic(recv) => recv.close().await,
+            RecvStream::Tcp(recv) => recv.close().await,
+        }
+    }
 }
 
 impl AsyncRead for RecvStream {

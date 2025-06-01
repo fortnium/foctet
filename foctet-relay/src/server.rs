@@ -1,12 +1,12 @@
-use foctet_core::{addr::node::NodeAddr, frame::{Frame, FrameType}, id::NodeId, proto::relay::{RegisterRequest, RegisterResponse, TunnelId, TunnelRequest}, transport::ListenerId};
+use foctet_core::{addr::node::NodeAddr, frame::{Frame, FrameType}, id::NodeId, proto::relay::{RegisterRequest, RegisterResponse, TunnelId, TunnelRequest, TunnelResponse}, transport::ListenerId};
 use foctet_net::{config::TransportConfig, transport::{connection::{Connection, ConnectionEvent}, quic::transport::QuicTransport, stream::Stream, tcp::transport::TcpTransport, Transport}};
 use stackaddr::{segment::protocol::TransportProtocol, StackAddr};
 use tokio_util::{sync::CancellationToken};
-use std::{collections::{HashMap, HashSet}, sync::{atomic::{AtomicU32, Ordering}, Arc}};
+use std::{collections::{HashMap, HashSet}, sync::{Arc}};
 use tokio::{io::AsyncWriteExt, sync::{mpsc, oneshot, RwLock}};
 use anyhow::Result;
 
-use crate::tunnel::{TunnelInfo};
+use crate::tunnel::TunnelStat;
 
 pub enum ServerEvent {
     ClientConnected(NodeId),
@@ -34,8 +34,7 @@ pub struct RelayServerState {
     pub nodes: Arc<RwLock<HashMap<NodeId, NodeAddr>>>,
     pub pending_streams: Arc<RwLock<HashMap<TunnelId, oneshot::Sender<Result<Stream>>>>>,
     pub control_streams: Arc<RwLock<HashMap<NodeId, mpsc::Sender<Frame>>>>,
-    pub tunnels: Arc<RwLock<HashMap<TunnelId, TunnelInfo>>>,
-    pub next_tunnel_id: Arc<AtomicU32>,
+    pub tunnels: Arc<RwLock<HashMap<TunnelId, TunnelStat>>>,
 }
 
 pub struct RelayServer {
@@ -254,59 +253,75 @@ impl RelayServer {
                             }
                         },
                         FrameType::TunnelRequest => {
-                            let mut req: TunnelRequest = TunnelRequest::from_bytes(&frame.payload)?;
-                            tracing::info!("Tunnel request from {} to {}", req.src_node, req.dst_node);
-                            // Generate a new TunnelId and register the pending stream
-                            let tunnel_id = TunnelId(state.next_tunnel_id.fetch_add(1, Ordering::Relaxed));
-                            let (res_tx, res_rx) = oneshot::channel();
-                            let mut pending_streams = state.pending_streams.write().await;
-                            pending_streams.insert(tunnel_id, res_tx);
-                            drop(pending_streams);
-                            // Check if the control stream for the destination node exists
-                            let control_streams = state.control_streams.read().await;
-                            if let Some(frame_sender) = control_streams.get(&req.dst_node) {
-                                req.tunnel_id = tunnel_id;
-                                let relay_frame = Frame::builder()
-                                    .as_request()
-                                    .with_frame_type(FrameType::TunnelRequest)
-                                    .with_payload(req.to_bytes()?)
-                                    .build();
-                                if let Err(e) = frame_sender.send(relay_frame).await {
-                                    tracing::info!("Error relaying tunnel request to control stream: {:?}", e);
-                                    break;
-                                }
-                                tracing::info!("Relayed tunnel request to control stream of node {}", req.dst_node);
-                            } else {
-                                tracing::info!("No control stream found for node {}", req.dst_node);
-                            }
-                            match res_rx.await {
-                                Ok(Ok(data_stream)) => {
-                                    // Establish the tunnel
-                                    let mut tunnels = state.tunnels.write().await;
-                                    tunnels.insert(tunnel_id, TunnelInfo::new(req.src_node, req.dst_node));
-                                    drop(tunnels);
-                                    event_sender.send(ServerEvent::TunnelEstablished { src_node: req.src_node, dst_node: req.dst_node }).await.unwrap();
-                                    tracing::info!("Tunnel established from {} to {}", req.src_node, req.dst_node);
-                                    // Handle the tunnel stream
-                                    let state = state.clone();
-                                    let event_sender = event_sender.clone();
-                                    tokio::spawn(async move {
-                                        if let Err(e) = RelayServer::handle_tunnel_stream(tunnel_id, stream, data_stream, event_sender, state).await {
-                                            tracing::info!("Error handling tunnel stream: {:?}", e);
+                            let req: TunnelRequest = TunnelRequest::from_bytes(&frame.payload)?;
+                            let req_clone = req.clone();
+                            match req {
+                                TunnelRequest::Create(tun) => {
+                                    tracing::info!("Tunnel request from {} to {}", tun.src_node, tun.dst_node);
+                                    // Register the pending stream
+                                    let (res_tx, res_rx) = oneshot::channel();
+                                    let mut pending_streams = state.pending_streams.write().await;
+                                    pending_streams.insert(tun.tunnel_id, res_tx);
+                                    drop(pending_streams);
+                                    // Check if the control stream for the destination node exists
+                                    let control_streams = state.control_streams.read().await;
+                                    if let Some(frame_sender) = control_streams.get(&tun.dst_node) {
+                                        let relay_frame = Frame::builder()
+                                            .as_request()
+                                            .with_frame_type(FrameType::TunnelRequest)
+                                            .with_payload(req_clone.to_bytes()?)
+                                            .build();
+                                        if let Err(e) = frame_sender.send(relay_frame).await {
+                                            tracing::info!("Error relaying tunnel request to control stream: {:?}", e);
+                                            break;
                                         }
-                                    });
-                                    tracing::info!("Tunnel stream handler spawned for tunnel ID: {}", tunnel_id);
-                                    break;
-                                }
-                                Ok(Err(e)) => {
-                                    event_sender.send(ServerEvent::TunnelFailed { src_node: req.src_node, dst_node: req.dst_node, reason: e.to_string() }).await.unwrap();
-                                    tracing::info!("Failed to establish tunnel from {} to {}: {:?}", req.src_node, req.dst_node, e);
-                                }
-                                Err(_) => {
-                                    event_sender.send(ServerEvent::TunnelFailed { src_node: req.src_node, dst_node: req.dst_node, reason: "Timeout".to_string() }).await.unwrap();
-                                    tracing::info!("Timed out waiting for tunnel response from {} to {}", req.src_node, req.dst_node);
+                                        tracing::info!("Relayed tunnel request to control stream of node {}", tun.dst_node);
+                                    } else {
+                                        tracing::info!("No control stream found for node {}", tun.dst_node);
+                                    }
+                                    match res_rx.await {
+                                        Ok(Ok(data_stream)) => {
+                                            // Establish the tunnel
+                                            let mut tunnels = state.tunnels.write().await;
+                                            tunnels.insert(tun.tunnel_id, TunnelStat::new(tun.src_node, tun.dst_node));
+                                            drop(tunnels);
+                                            event_sender.send(ServerEvent::TunnelEstablished { src_node: tun.src_node, dst_node: tun.dst_node }).await.unwrap();
+                                            tracing::info!("Tunnel established from {} to {}", tun.src_node, tun.dst_node);
+                                            // Send a response to the client
+                                            let res = TunnelResponse::Created(tun.tunnel_id);
+                                            let response_frame = Frame::builder()
+                                                .as_response()
+                                                .with_frame_type(FrameType::TunnelResponse)
+                                                .with_payload(res.to_bytes()?)
+                                                .build();
+                                            stream.send_frame(response_frame).await?;
+                                            // Handle the tunnel stream
+                                            let state = state.clone();
+                                            let event_sender = event_sender.clone();
+                                            tokio::spawn(async move {
+                                                if let Err(e) = RelayServer::handle_tunnel_stream(tun.tunnel_id, stream, data_stream, event_sender, state).await {
+                                                    tracing::info!("Error handling tunnel stream: {:?}", e);
+                                                }
+                                            });
+                                            tracing::info!("Tunnel stream handler spawned for tunnel ID: {}", tun.tunnel_id);
+                                            break;
+                                        }
+                                        Ok(Err(e)) => {
+                                            event_sender.send(ServerEvent::TunnelFailed { src_node: tun.src_node, dst_node: tun.dst_node, reason: e.to_string() }).await.unwrap();
+                                            tracing::info!("Failed to establish tunnel from {} to {}: {:?}", tun.src_node, tun.dst_node, e);
+                                        }
+                                        Err(_) => {
+                                            event_sender.send(ServerEvent::TunnelFailed { src_node: tun.src_node, dst_node: tun.dst_node, reason: "Timeout".to_string() }).await.unwrap();
+                                            tracing::info!("Timed out waiting for tunnel response from {} to {}", tun.src_node, tun.dst_node);
+                                        }
+                                    }
+                                },
+                                _ => {
+                                    tracing::info!("Received unknown tunnel request: {:?}", req);
+                                    continue;
                                 }
                             }
+                            
                         },
                         _ => {
                             tracing::info!("Unknown frame type: {:?}", frame.header.frame_type);

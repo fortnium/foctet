@@ -20,6 +20,16 @@ pub struct NodeAddr {
     pub relay_addr: Option<RelayAddr>,
 }
 
+impl Default for NodeAddr {
+    fn default() -> Self {
+        Self {
+            node_id: NodeId::zero(),
+            addresses: BTreeSet::new(),
+            relay_addr: None,
+        }
+    }
+}
+
 impl NodeAddr {
     /// Decodes a NodeAddr from a bytes. 
     pub fn from_bytes(bytes: Bytes) -> Result<Self> {
@@ -99,6 +109,15 @@ pub struct RelayAddr {
     pub addresses: BTreeSet<StackAddr>,
 }
 
+impl Default for RelayAddr {
+    fn default() -> Self {
+        Self {
+            node_id: NodeId::zero(),
+            addresses: BTreeSet::new(),
+        }
+    }
+}
+
 impl RelayAddr {
     /// Converts a RFC4648 base32 string into a RelayAddr.
     pub fn from_base32(encoded: &str) -> Result<Self> {
@@ -116,6 +135,41 @@ impl RelayAddr {
     pub fn to_base32(&self) -> Result<String> {
         let serialized = bincode::serde::encode_to_vec(self, bincode::config::standard())?;
         Ok(base32::encode(Alphabet::Rfc4648 { padding: false }, &serialized))
+    }
+    
+    pub fn get_direct_addrs(&self, transport_id: &TransportKind, allow_loopback: bool) -> Vec<StackAddr> {
+        let mut addrs = Vec::new();
+        for addr in &self.addresses {
+            match addr.ip() {
+                Some(ip) => {
+                    if !allow_loopback && ip.is_loopback() {
+                        continue;
+                    }
+                }
+                None => {
+                    continue;
+                }
+            }
+            match transport_id {
+                TransportKind::Quic => {
+                    match addr.transport() {
+                        Some(TransportProtocol::Quic(_)) | Some(TransportProtocol::Udp(_)) => {
+                            addrs.push(addr.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                TransportKind::TlsOverTcp => {
+                    match addr.transport() {
+                        Some(TransportProtocol::Tcp(_)) | Some(TransportProtocol::TlsOverTcp(_)) => {
+                            addrs.push(addr.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        addrs
     }
 }
 
