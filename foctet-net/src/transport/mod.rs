@@ -82,7 +82,7 @@ impl Transport {
     pub fn transport_kind(&self) -> TransportKind {
         match self {
             Self::Quic(_) => TransportKind::Quic,
-            Self::Tcp(_) => TransportKind::TlsOverTcp,
+            Self::Tcp(_) => TransportKind::TlsTcp,
         }
     }
     pub async fn listen_on(

@@ -31,7 +31,7 @@ bytes = { workspace = true }
 flate2 = "1.0"
 tar = "0.4"
 home = "0.5"
-uuid = { version = "1.9", features = ["v4", "fast-rng", "macro-diagnostics"]}
+uuid = { version = "1.17", features = ["v4", "fast-rng", "macro-diagnostics"]}
 nohash-hasher = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -41,7 +41,7 @@ impl fmt::Display for ListenerId {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TransportKind {
     Quic,
-    TlsOverTcp,
+    TlsTcp,
 }
 
 impl TransportKind {
@@ -49,8 +49,8 @@ impl TransportKind {
         match proto {
             TransportProtocol::Udp(_) => Ok(TransportKind::Quic),
             TransportProtocol::Quic(_) => Ok(TransportKind::Quic),
-            TransportProtocol::Tcp(_) => Ok(TransportKind::TlsOverTcp),
-            TransportProtocol::TlsOverTcp(_) => Ok(TransportKind::TlsOverTcp),
+            TransportProtocol::Tcp(_) => Ok(TransportKind::TlsTcp),
+            TransportProtocol::TlsTcp(_) => Ok(TransportKind::TlsTcp),
             _ => Err(anyhow::anyhow!("Unsupported transport protocol: {:?}", proto)),
         }
     }

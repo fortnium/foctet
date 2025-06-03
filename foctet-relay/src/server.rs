@@ -1,4 +1,4 @@
-use foctet_core::{addr::node::NodeAddr, frame::{Frame, FrameType}, id::NodeId, proto::relay::{RegisterRequest, RegisterResponse, TunnelId, TunnelRequest, TunnelResponse}, transport::ListenerId};
+use foctet_core::{addr::node::NodeAddr, frame::{Frame, FrameType}, id::NodeId, key::Keypair, proto::relay::{RegisterRequest, RegisterResponse, TunnelId, TunnelRequest, TunnelResponse}, transport::ListenerId};
 use foctet_net::{config::TransportConfig, transport::{connection::{Connection, ConnectionEvent}, quic::transport::QuicTransport, stream::Stream, tcp::transport::TcpTransport, Transport}};
 use stackaddr::{segment::protocol::TransportProtocol, StackAddr};
 use tokio_util::{sync::CancellationToken};
@@ -25,8 +25,7 @@ pub enum ServerEvent {
 }
 
 pub enum ServerCommand {
-    Start,
-    Stop,
+    Shutdown,
 }
 
 #[derive(Clone)]
@@ -37,19 +36,30 @@ pub struct RelayServerState {
     pub tunnels: Arc<RwLock<HashMap<TunnelId, TunnelStat>>>,
 }
 
-pub struct RelayServer {
+impl RelayServerState {
+    pub fn new() -> Self {
+        Self {
+            nodes: Arc::new(RwLock::new(HashMap::new())),
+            pending_streams: Arc::new(RwLock::new(HashMap::new())),
+            control_streams: Arc::new(RwLock::new(HashMap::new())),
+            tunnels: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+pub struct RelayServerActor {
     config: TransportConfig,
     addrs: HashSet<StackAddr>,
+    event_sender: mpsc::Sender<ServerEvent>,
     cmd_receiver: mpsc::Receiver<ServerCommand>,
     state: RelayServerState,
     cancel: CancellationToken,
 }
 
-impl RelayServer {
+impl RelayServerActor {
     pub async fn run(&mut self) -> Result<()> {
         let mut listerner_id = ListenerId::new(1);
         // Create a channel for endpoint events
-        let (event_sender, mut event_receiver): (mpsc::Sender<ServerEvent>, mpsc::Receiver<ServerEvent>) = mpsc::channel(100);
         for addr in &self.addrs {
             let config = self.config.clone();
             let mut transport: Transport = match addr.transport() {
@@ -58,7 +68,7 @@ impl RelayServer {
                         let t = QuicTransport::new(config)?;
                         Transport::Quic(t)
                     },
-                    TransportProtocol::TlsOverTcp(_) | TransportProtocol::Tcp(_) => {
+                    TransportProtocol::TlsTcp(_) | TransportProtocol::Tcp(_) => {
                         let t = TcpTransport::new(config)?;
                         Transport::Tcp(t)
                     },
@@ -69,7 +79,7 @@ impl RelayServer {
                 }
             };
             // Listen for incoming connections
-            let event_sender = event_sender.clone();
+            let event_sender = self.event_sender.clone();
             let state = self.state.clone();
             let mut listener = transport.listen_on(listerner_id.fetch_add(1), addr.clone()).await?;
             tokio::spawn(async move {
@@ -81,7 +91,7 @@ impl RelayServer {
                             let event_sender = event_sender.clone();
                             let state = state.clone();
                             tokio::spawn(async move {
-                                let _ = RelayServer::handle_connection(&mut conn, event_sender, state).await;
+                                let _ = RelayServerActor::handle_connection(&mut conn, event_sender, state).await;
                             });
                         }
                         _ => {},
@@ -98,34 +108,10 @@ impl RelayServer {
                 }
                 Some(cmd) = self.cmd_receiver.recv() => {
                     match cmd {
-                        ServerCommand::Start => {
-                            tracing::info!("RelayServer started");
-                        }
-                        ServerCommand::Stop => {
-                            tracing::info!("RelayServer stopped");
+                        ServerCommand::Shutdown => {
+                            tracing::info!("RelayServer shutting down");
+                            // TODO: Clean up resources, close connections, etc.
                             break;
-                        }
-                    }
-                }
-                Some(event) = event_receiver.recv() => {
-                    match event {
-                        ServerEvent::ClientConnected(client_info) => {
-                            tracing::info!("Client connected: {:?}", client_info);
-                        }
-                        ServerEvent::ClientDisconnected(node_id) => {
-                            tracing::info!("Client disconnected: {:?}", node_id);
-                        }
-                        ServerEvent::ClientRegistered(client_info) => {
-                            tracing::info!("Client registered: {:?}", client_info);
-                        }
-                        ServerEvent::ClientUnregistered(node_id) => {
-                            tracing::info!("Client unregistered: {:?}", node_id);
-                        }
-                        ServerEvent::TunnelEstablished { src_node, dst_node } => {
-                            tracing::info!("Tunnel established from {} to {}", src_node, dst_node);
-                        }
-                        ServerEvent::TunnelFailed { src_node, dst_node, reason } => {
-                            tracing::error!("Tunnel failed from {} to {}: {}", src_node, dst_node, reason);
                         }
                     }
                 }
@@ -148,7 +134,7 @@ impl RelayServer {
                     let state = state.clone();
                     tokio::spawn(async move {
                         let event_sender = event_sender.clone();
-                        let _ = RelayServer::handle_stream(node_id, stream, event_sender, state).await;
+                        let _ = RelayServerActor::handle_stream(node_id, stream, event_sender, state).await;
                     });
                 }
                 Err(e) => {
@@ -202,7 +188,7 @@ impl RelayServer {
                                     let state = state.clone();
                                     let event_sender = event_sender.clone();
                                     tokio::spawn(async move {
-                                        if let Err(e) = RelayServer::handle_control_stream(node_id, stream, event_sender, frame_receiver, state).await {
+                                        if let Err(e) = RelayServerActor::handle_control_stream(node_id, stream, event_sender, frame_receiver, state).await {
                                             tracing::info!("Error handling tunnel stream: {:?}", e);
                                         }
                                     });
@@ -299,7 +285,7 @@ impl RelayServer {
                                             let state = state.clone();
                                             let event_sender = event_sender.clone();
                                             tokio::spawn(async move {
-                                                if let Err(e) = RelayServer::handle_tunnel_stream(tun.tunnel_id, stream, data_stream, event_sender, state).await {
+                                                if let Err(e) = RelayServerActor::handle_tunnel_stream(tun.tunnel_id, stream, data_stream, event_sender, state).await {
                                                     tracing::info!("Error handling tunnel stream: {:?}", e);
                                                 }
                                             });
@@ -430,17 +416,106 @@ impl RelayServer {
     }
 }
 
-pub struct Server {
-    // config: TransportConfig,
-    // relay_addrs: HashSet<StackAddr>,
-    // nodes: Arc<RwLock<HashMap<NodeId, NodeAddr>>>,
-    // relay_event_receiver: mpsc::Receiver<ServerEvent>,
-    // relay_cmd_sender: mpsc::Sender<ServerCommand>,
-    // relay_server_task: AbortOnDropHandle<()>,
-    // stun_server_task: AbortOnDropHandle<()>,
-    // cancel: CancellationToken,
+pub struct RelayServer {
+    config: TransportConfig,
+    relay_addrs: HashSet<StackAddr>,
+    event_receiver: mpsc::Receiver<ServerEvent>,
+    cmd_sender: mpsc::Sender<ServerCommand>,
+    cancel: CancellationToken,
 }
 
-impl Server {
-    
+impl RelayServer {
+    pub fn builder() -> RelayServerBuilder {
+        RelayServerBuilder::default()
+    }
+
+    pub fn config(&self) -> &TransportConfig {
+        &self.config
+    }
+
+    pub fn relay_addrs(&self) -> &HashSet<StackAddr> {
+        &self.relay_addrs
+    }
+
+    pub async fn send_command(&self, cmd: ServerCommand) -> Result<()> {
+        self.cmd_sender.send(cmd).await?;
+        Ok(())
+    }
+
+    pub async fn next_event(&mut self) -> Option<ServerEvent> {
+        self.event_receiver.recv().await
+    }
+
+    pub async fn shutdown(&self) -> Result<()> {
+        self.cmd_sender.send(ServerCommand::Shutdown).await?;
+        self.cancel.cancel();
+        Ok(())
+    }
+}
+
+pub struct RelayServerBuilder {
+    config: TransportConfig,
+    relay_addrs: HashSet<StackAddr>,
+}
+
+impl Default for RelayServerBuilder {
+    fn default() -> Self {
+        let keypair = Keypair::generate();
+        let config = TransportConfig::new(keypair.clone()).unwrap();
+
+        Self {
+            config,
+            relay_addrs: HashSet::new(),
+        }
+    }
+}
+
+impl RelayServerBuilder {
+    pub fn with_config(mut self, config: TransportConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    pub fn with_addr(mut self, addr: StackAddr) -> Self {
+        self.relay_addrs.insert(addr);
+        self
+    }
+
+    pub fn with_addrs(mut self, addr: &[StackAddr]) -> Self {
+        for a in addr {
+            self.relay_addrs.insert(a.clone());
+        }
+        self
+    }
+
+    pub fn build(self) -> Result<RelayServer> {
+        let (event_sender, event_receiver) = mpsc::channel(100);
+        let (cmd_sender, cmd_receiver) = mpsc::channel(100);
+        let cancel = CancellationToken::new();
+
+        let state = RelayServerState::new();
+
+        let mut actor = RelayServerActor {
+            config: self.config.clone(),
+            addrs: self.relay_addrs.clone(),
+            event_sender: event_sender,
+            cmd_receiver,
+            state,
+            cancel: cancel.clone(),
+        };
+
+        tokio::spawn(async move {
+            if let Err(e) = actor.run().await {
+                tracing::error!("Relay server actor failed: {:?}", e);
+            }
+        });
+
+        Ok(RelayServer {
+            config: self.config,
+            relay_addrs: self.relay_addrs,
+            event_receiver,
+            cmd_sender,
+            cancel,
+        })
+    }
 }

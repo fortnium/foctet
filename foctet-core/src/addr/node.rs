@@ -86,9 +86,9 @@ impl NodeAddr {
                         _ => {}
                     }
                 }
-                TransportKind::TlsOverTcp => {
+                TransportKind::TlsTcp => {
                     match addr.transport() {
-                        Some(TransportProtocol::Tcp(_)) | Some(TransportProtocol::TlsOverTcp(_)) => {
+                        Some(TransportProtocol::Tcp(_)) | Some(TransportProtocol::TlsTcp(_)) => {
                             addrs.push(addr.clone());
                         }
                         _ => {}
@@ -159,9 +159,9 @@ impl RelayAddr {
                         _ => {}
                     }
                 }
-                TransportKind::TlsOverTcp => {
+                TransportKind::TlsTcp => {
                     match addr.transport() {
-                        Some(TransportProtocol::Tcp(_)) | Some(TransportProtocol::TlsOverTcp(_)) => {
+                        Some(TransportProtocol::Tcp(_)) | Some(TransportProtocol::TlsTcp(_)) => {
                             addrs.push(addr.clone());
                         }
                         _ => {}

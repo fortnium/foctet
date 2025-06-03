@@ -33,10 +33,6 @@ impl ListenerHandle {
     }
 }
 
-pub struct RelayActor {
-
-}
-
 pub struct EndpointActor {
     config: TransportConfig,
     addrs: HashSet<StackAddr>,
@@ -60,7 +56,7 @@ impl EndpointActor {
                             let t = QuicTransport::new(config)?;
                             Transport::Quic(t)
                         },
-                        TransportProtocol::TlsOverTcp(_) | TransportProtocol::Tcp(_) => {
+                        TransportProtocol::TlsTcp(_) | TransportProtocol::Tcp(_) => {
                             let t = TcpTransport::new(config)?;
                             Transport::Tcp(t)
                         },
@@ -199,8 +195,8 @@ impl Endpoint {
                         let t = self.transports.get_mut(&TransportKind::Quic).ok_or_else(|| anyhow!("QUIC transport not found"))?;
                         t.connect(addr).await
                     },
-                    TransportProtocol::TlsOverTcp(_) | TransportProtocol::Tcp(_) => {
-                        let t = self.transports.get_mut(&TransportKind::TlsOverTcp).ok_or_else(|| anyhow!("TCP transport not found"))?;
+                    TransportProtocol::TlsTcp(_) | TransportProtocol::Tcp(_) => {
+                        let t = self.transports.get_mut(&TransportKind::TlsTcp).ok_or_else(|| anyhow!("TCP transport not found"))?;
                         t.connect(addr).await
                     },
                     _ => Err(anyhow!("Unsupported transport protocol: {:?}", transport)),
@@ -354,7 +350,7 @@ impl EndpointBuilder {
     /// Add TCP support to the endpoint.
     /// If `addr` is not set, the default address will be used for listening.
     pub fn with_tcp(mut self) -> Self {
-        self.push_protocol(TransportKind::TlsOverTcp);
+        self.push_protocol(TransportKind::TlsTcp);
         self
     }
 
@@ -417,10 +413,10 @@ impl EndpointBuilder {
                     transports.insert(TransportKind::Quic, Transport::Quic(t));
                     priority_map.insert(priority, TransportKind::Quic);
                 },
-                TransportKind::TlsOverTcp => {
+                TransportKind::TlsTcp => {
                     let t = TcpTransport::new(self.config.clone())?;
-                    transports.insert(TransportKind::TlsOverTcp, Transport::Tcp(t));
-                    priority_map.insert(priority, TransportKind::TlsOverTcp);
+                    transports.insert(TransportKind::TlsTcp, Transport::Tcp(t));
+                    priority_map.insert(priority, TransportKind::TlsTcp);
                 },
             }
         }
@@ -498,7 +494,7 @@ fn get_unspecified_stack_addrs(protocols: &[TransportKind]) -> HashSet<StackAddr
                     }
                 }
             }
-            TransportKind::TlsOverTcp => {
+            TransportKind::TlsTcp => {
                 match unspecified_addr.ip() {
                     IpAddr::V4(ipv4) => {
                         addrs.insert(StackAddr::empty()
@@ -541,7 +537,7 @@ fn get_default_stack_addrs(protocols: &[TransportKind], allow_loopback: bool) ->
                         }
                     }
                 }
-                TransportKind::TlsOverTcp => {
+                TransportKind::TlsTcp => {
                     match addr.ip() {
                         IpAddr::V4(ipv4) => {
                             addrs.insert(StackAddr::empty()
@@ -609,7 +605,7 @@ fn replace_with_actual_addrs(
                                 }
                             }
                         }
-                        TransportKind::TlsOverTcp => {
+                        TransportKind::TlsTcp => {
                             match actual.ip() {
                                 IpAddr::V4(ipv4) => {
                                     if sock_addr.ip().is_ipv4() {

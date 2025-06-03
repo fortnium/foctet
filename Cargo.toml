@@ -30,4 +30,4 @@ bincode = { version = "2.0", features = ["serde"] }
 rcgen = "0.13"
 ring = "0.17"
 serde = { version = "1" }
-stackaddr = { version = "0.5", features = ["serde"] }
+stackaddr = { version = "0.6", features = ["serde"] }

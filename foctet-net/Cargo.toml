@@ -20,7 +20,7 @@ futures = { workspace = true }
 tokio = { workspace = true, features = ["fs"]}
 tokio-util = {workspace = true, features = ["codec", "rt"] }
 stackaddr = { workspace = true }
-netdev = "0.34"
+netdev = "0.35"
 ipnet = { version = "2.11" }
 webpki = { version = "0.101", package = "rustls-webpki", features = ["std"] }
 x509-parser = "0.16"

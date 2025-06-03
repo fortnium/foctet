@@ -299,8 +299,8 @@ impl RelayClientBuilder {
                             protocol = TransportKind::Quic;
                             break;
                         },
-                        TransportProtocol::TlsOverTcp(_) | TransportProtocol::Tcp(_) => {
-                            protocol = TransportKind::TlsOverTcp;
+                        TransportProtocol::TlsTcp(_) | TransportProtocol::Tcp(_) => {
+                            protocol = TransportKind::TlsTcp;
                             break;
                         },
                         _ => {}
@@ -314,7 +314,7 @@ impl RelayClientBuilder {
                 let t = QuicTransport::new(self.config.clone())?;
                 Transport::Quic(t)
             },
-            TransportKind::TlsOverTcp => {
+            TransportKind::TlsTcp => {
                 let t = TcpTransport::new(self.config.clone())?;
                 Transport::Tcp(t)
             },
