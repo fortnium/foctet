@@ -1,5 +1,5 @@
 use crate::{
-    config::TransportConfig, device, transport::{
+    config::TransportConfig, device::{self, get_default_stack_addrs, get_unspecified_stack_addrs, replace_with_actual_addrs}, transport::{
         connection::{Connection, ConnectionEvent}, quic::transport::QuicTransport, tcp::transport::TcpTransport, Transport,
     }
 };
@@ -9,7 +9,7 @@ use foctet_core::{addr::node::{NodeAddr, RelayAddr}, default, id::NodeId, ip, ke
 use stackaddr::{segment::protocol::TransportProtocol, Identity, Protocol, StackAddr};
 use tokio_util::sync::CancellationToken;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet}, net::{IpAddr, Ipv4Addr}, sync::Arc
+    collections::{BTreeMap, HashMap, HashSet}, net::Ipv4Addr, sync::Arc
 };
 use tokio::sync::{mpsc, Mutex};
 
@@ -471,166 +471,4 @@ impl EndpointBuilder {
             allow_loopback: self.allow_loopback,
         })
     }
-}
-
-fn get_unspecified_stack_addrs(protocols: &[TransportKind]) -> HashSet<StackAddr> {
-    let unspecified_addr = device::get_unspecified_server_addr();
-    let mut addrs = HashSet::new();
-    for proto in protocols.iter() {
-        match proto {
-            TransportKind::Quic => {
-                match unspecified_addr.ip() {
-                    IpAddr::V4(ipv4) => {
-                        addrs.insert(StackAddr::empty()
-                            .with_protocol(Protocol::Ip4(ipv4))
-                            .with_protocol(Protocol::Udp(unspecified_addr.port()))
-                            .with_protocol(Protocol::Quic));
-                    }
-                    IpAddr::V6(ipv6) => {
-                        addrs.insert(StackAddr::empty()
-                            .with_protocol(Protocol::Ip6(ipv6))
-                            .with_protocol(Protocol::Udp(unspecified_addr.port()))
-                            .with_protocol(Protocol::Quic));
-                    }
-                }
-            }
-            TransportKind::TlsTcp => {
-                match unspecified_addr.ip() {
-                    IpAddr::V4(ipv4) => {
-                        addrs.insert(StackAddr::empty()
-                            .with_protocol(Protocol::Ip4(ipv4))
-                            .with_protocol(Protocol::Tcp(unspecified_addr.port()))
-                            .with_protocol(Protocol::Tls));
-                    }
-                    IpAddr::V6(ipv6) => {
-                        addrs.insert(StackAddr::empty()
-                            .with_protocol(Protocol::Ip6(ipv6))
-                            .with_protocol(Protocol::Tcp(unspecified_addr.port()))
-                            .with_protocol(Protocol::Tls));
-                    }
-                }
-            }
-        }
-    }
-    addrs
-}
-
-fn get_default_stack_addrs(protocols: &[TransportKind], allow_loopback: bool) -> HashSet<StackAddr> {
-    let socket_addrs = crate::device::get_default_server_addrs(default::DEFAULT_SERVER_PORT, allow_loopback);
-    let mut addrs = HashSet::new();
-    for proto in protocols.iter() {
-        for addr in socket_addrs.iter() {
-            match proto {
-                TransportKind::Quic => {
-                    match addr.ip() {
-                        IpAddr::V4(ipv4) => {
-                            addrs.insert(StackAddr::empty()
-                                .with_protocol(Protocol::Ip4(ipv4))
-                                .with_protocol(Protocol::Udp(addr.port()))
-                                .with_protocol(Protocol::Quic));
-                        }
-                        IpAddr::V6(ipv6) => {
-                            addrs.insert(StackAddr::empty()
-                                .with_protocol(Protocol::Ip6(ipv6))
-                                .with_protocol(Protocol::Udp(addr.port()))
-                                .with_protocol(Protocol::Quic));
-                        }
-                    }
-                }
-                TransportKind::TlsTcp => {
-                    match addr.ip() {
-                        IpAddr::V4(ipv4) => {
-                            addrs.insert(StackAddr::empty()
-                                .with_protocol(Protocol::Ip4(ipv4))
-                                .with_protocol(Protocol::Tcp(addr.port()))
-                                .with_protocol(Protocol::Tls));
-                        }
-                        IpAddr::V6(ipv6) => {
-                            addrs.insert(StackAddr::empty()
-                                .with_protocol(Protocol::Ip6(ipv6))
-                                .with_protocol(Protocol::Tcp(addr.port()))
-                                .with_protocol(Protocol::Tls));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    addrs
-}
-
-fn replace_with_actual_addrs(
-    input_addrs: &HashSet<StackAddr>,
-    protocols: &[TransportKind],
-    allow_loopback: bool
-) -> HashSet<StackAddr> {
-    let mut result = HashSet::new();
-
-    let actual_addrs = crate::device::get_default_server_addrs(default::DEFAULT_SERVER_PORT, allow_loopback);
-
-    for addr in input_addrs {
-        let sock_addr = match addr.socket_addr() {
-            Some(sock_addr) => sock_addr,
-            None => {
-                tracing::error!("Invalid address: {:?}", addr);
-                continue;
-            }
-        };
-        let is_unspecified = match sock_addr.ip() {
-            IpAddr::V4(ip) => ip.is_unspecified(),
-            IpAddr::V6(ip) => ip.is_unspecified(),
-        };
-
-        if is_unspecified {
-            for actual in &actual_addrs {
-                for proto in protocols {
-                    match proto {
-                        TransportKind::Quic => {
-                            match actual.ip() {
-                                IpAddr::V4(ipv4) => {
-                                    if sock_addr.ip().is_ipv4() {
-                                        result.insert(StackAddr::empty()
-                                            .with_protocol(Protocol::Ip4(ipv4))
-                                            .with_protocol(Protocol::Udp(sock_addr.port()))
-                                            .with_protocol(Protocol::Quic));
-                                    }
-                                }
-                                IpAddr::V6(ipv6) => {
-                                    if sock_addr.ip().is_ipv6() {
-                                        result.insert(StackAddr::empty()
-                                            .with_protocol(Protocol::Ip6(ipv6))
-                                            .with_protocol(Protocol::Udp(sock_addr.port()))
-                                            .with_protocol(Protocol::Quic));
-                                    }
-                                }
-                            }
-                        }
-                        TransportKind::TlsTcp => {
-                            match actual.ip() {
-                                IpAddr::V4(ipv4) => {
-                                    if sock_addr.ip().is_ipv4() {
-                                        result.insert(StackAddr::empty()
-                                            .with_protocol(Protocol::Ip4(ipv4))
-                                            .with_protocol(Protocol::Tcp(sock_addr.port()))
-                                            .with_protocol(Protocol::Tls));
-                                    }
-                                }
-                                IpAddr::V6(ipv6) => {
-                                    if sock_addr.ip().is_ipv6() {
-                                        result.insert(StackAddr::empty()
-                                            .with_protocol(Protocol::Ip6(ipv6))
-                                            .with_protocol(Protocol::Tcp(sock_addr.port()))
-                                            .with_protocol(Protocol::Tls));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            result.insert(addr.clone());
-        }
-    }
-    result
 }

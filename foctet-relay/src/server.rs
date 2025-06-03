@@ -1,5 +1,5 @@
-use foctet_core::{addr::node::NodeAddr, frame::{Frame, FrameType}, id::NodeId, key::Keypair, proto::relay::{RegisterRequest, RegisterResponse, TunnelId, TunnelRequest, TunnelResponse}, transport::ListenerId};
-use foctet_net::{config::TransportConfig, transport::{connection::{Connection, ConnectionEvent}, quic::transport::QuicTransport, stream::Stream, tcp::transport::TcpTransport, Transport}};
+use foctet_core::{addr::node::{NodeAddr, RelayAddr}, frame::{Frame, FrameType}, id::NodeId, key::Keypair, proto::relay::{RegisterRequest, RegisterResponse, TunnelId, TunnelRequest, TunnelResponse}, transport::{ListenerId, TransportKind}};
+use foctet_net::{config::TransportConfig, device::{get_default_stack_addrs, get_unspecified_stack_addrs, replace_with_actual_addrs}, transport::{connection::{Connection, ConnectionEvent}, quic::transport::QuicTransport, stream::Stream, tcp::transport::TcpTransport, Transport}};
 use stackaddr::{segment::protocol::TransportProtocol, StackAddr};
 use tokio_util::{sync::CancellationToken};
 use std::{collections::{HashMap, HashSet}, sync::{Arc}};
@@ -178,7 +178,6 @@ impl RelayServerActor {
                                     tracing::info!("Sent register response to {}", node_id);
                                     // Notify the event sender
                                     event_sender.send(ServerEvent::ClientRegistered(node_id)).await.unwrap();
-                                    tracing::info!("Handling control stream ID: {}", stream.stream_id());
 
                                     let (frame_sender, frame_receiver) = mpsc::channel(100);
                                     let mut control_streams = state.control_streams.write().await;
@@ -429,11 +428,25 @@ impl RelayServer {
         RelayServerBuilder::default()
     }
 
+    /// Get the node ID of the server.
+    /// This is the public key of the server's keypair.
+    pub fn node_id(&self) -> NodeId {
+        self.config.keypair().public().into()
+    }
+
+    /// Return current (relay) node address for the server.
+    pub fn node_addr(&self) -> RelayAddr {
+        RelayAddr {
+            node_id: self.node_id(),
+            addresses: self.relay_addrs.iter().cloned().collect(),
+        }
+    }
+
     pub fn config(&self) -> &TransportConfig {
         &self.config
     }
 
-    pub fn relay_addrs(&self) -> &HashSet<StackAddr> {
+    pub fn addrs(&self) -> &HashSet<StackAddr> {
         &self.relay_addrs
     }
 
@@ -455,17 +468,24 @@ impl RelayServer {
 
 pub struct RelayServerBuilder {
     config: TransportConfig,
-    relay_addrs: HashSet<StackAddr>,
+    addrs: HashSet<StackAddr>,
+    protocols: Vec<TransportKind>,
+    allow_loopback: bool,
 }
 
 impl Default for RelayServerBuilder {
     fn default() -> Self {
         let keypair = Keypair::generate();
         let config = TransportConfig::new(keypair.clone()).unwrap();
+        
+        let mut protocols = Vec::new();
+        protocols.push(TransportKind::Quic);
 
         Self {
             config,
-            relay_addrs: HashSet::new(),
+            addrs: HashSet::new(),
+            protocols: protocols,
+            allow_loopback: false,
         }
     }
 }
@@ -477,14 +497,30 @@ impl RelayServerBuilder {
     }
 
     pub fn with_addr(mut self, addr: StackAddr) -> Self {
-        self.relay_addrs.insert(addr);
+        self.addrs.insert(addr);
         self
     }
 
     pub fn with_addrs(mut self, addr: &[StackAddr]) -> Self {
         for a in addr {
-            self.relay_addrs.insert(a.clone());
+            self.addrs.insert(a.clone());
         }
+        self
+    }
+
+    fn push_protocol(&mut self, proto: TransportKind) {
+        if !self.protocols.contains(&proto) {
+            self.protocols.push(proto);
+        }
+    }
+
+    pub fn with_protocol(mut self, protocol: TransportKind) -> Self {
+        self.push_protocol(protocol);
+        self
+    }
+
+    pub fn with_allow_loopback(mut self, allow_loopback: bool) -> Self {
+        self.allow_loopback = allow_loopback;
         self
     }
 
@@ -495,9 +531,15 @@ impl RelayServerBuilder {
 
         let state = RelayServerState::new();
 
+        let addrs = if self.addrs.is_empty() {
+            get_unspecified_stack_addrs(&self.protocols)
+        } else {
+            self.addrs.clone()
+        };
+
         let mut actor = RelayServerActor {
             config: self.config.clone(),
-            addrs: self.relay_addrs.clone(),
+            addrs: addrs,
             event_sender: event_sender,
             cmd_receiver,
             state,
@@ -510,9 +552,15 @@ impl RelayServerBuilder {
             }
         });
 
+        let direct_addrs = if self.addrs.is_empty() {
+            get_default_stack_addrs(&self.protocols, self.allow_loopback)
+        } else {
+            replace_with_actual_addrs(&self.addrs, &self.protocols, self.allow_loopback)
+        };
+
         Ok(RelayServer {
             config: self.config,
-            relay_addrs: self.relay_addrs,
+            relay_addrs: direct_addrs,
             event_receiver,
             cmd_sender,
             cancel,
