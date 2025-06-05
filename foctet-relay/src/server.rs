@@ -403,6 +403,9 @@ impl RelayServerActor {
             tracing::info!("Tunnel ID {} not found in state", tunnel_id);
             return Err(anyhow::anyhow!("Tunnel ID not found"));
         }
+        
+        drop(tunnels);
+
         // Wait for both directions to finish
         let _ = tokio::try_join!(t1, t2);
         // Clean up tunnel
