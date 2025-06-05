@@ -217,6 +217,22 @@ impl RelayClient {
     pub fn builder() -> RelayClientBuilder {
         RelayClientBuilder::default()
     }
+
+    pub async fn open_stream(&self, node_id: NodeId) -> Result<Stream> {
+        let (responder, receiver) = oneshot::channel();
+        self.cmd_sender.send(RelayCommand::OpenStream(node_id, responder)).await?;
+        receiver.await.map_err(|_| anyhow!("Failed to receive stream response"))?
+    }
+
+    pub async fn accept_stream(&mut self) -> Option<Stream> {
+        self.stream_receiver.recv().await
+    }
+
+    pub async fn send_control_message(&self, frame: Frame) -> Result<()> {
+        self.cmd_sender.send(RelayCommand::SendControlMessage(frame)).await?;
+        Ok(())
+    }
+
     pub async fn shutdown(&self) -> Result<()> {
         self.cmd_sender.send(RelayCommand::Shutdown).await?;
         self.cancel.cancel();
