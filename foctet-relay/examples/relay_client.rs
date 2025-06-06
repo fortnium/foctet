@@ -1,6 +1,6 @@
 use clap::Parser;
 use anyhow::Result;
-use foctet_core::{addr::node::{NodeAddr, RelayAddr}, frame::Frame, id::NodeId, key::Keypair, proto::relay::RegisterResponse, transport::TransportKind};
+use foctet_core::{addr::node::{NodeAddr, RelayAddr}, frame::Frame, id::NodeId, key::Keypair, transport::TransportKind};
 use foctet_net::{config::TransportConfig, device::get_default_stack_addrs};
 use foctet_relay::client::RelayClient;
 use tracing::Level;
@@ -97,10 +97,6 @@ async fn main() -> Result<()> {
         while let Some(mut stream) = client.accept_stream().await {
             
             tracing::info!("Accepted incoming stream: {:?}", stream.stream_id());
-
-            let response = stream.receive_frame().await?;
-            let reg_response = RegisterResponse::from_bytes(&response.payload)?;
-            tracing::info!("Received datastream response: {:?}", reg_response);
             
             let response = stream.receive_frame().await?;
             tracing::info!("Received frame: {:?}", response.payload);

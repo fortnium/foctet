@@ -178,6 +178,25 @@ impl RelayClientActor {
                                         .with_payload(reg_req)
                                         .build();
                                     new_stream.send_frame(reg_frame).await?;
+                                    tracing::info!("Sent datastream register request for tunnel: {}", tunnel_info.tunnel_id);
+                                    // Wait for the relay server to respond with a confirmation.
+                                    let res_frame = new_stream.receive_frame().await?;
+                                    let reg_res = RegisterResponse::from_bytes(&res_frame.payload)?;
+                                    match reg_res {
+                                        RegisterResponse::DataStreamAccepted(tunnel_id) => {
+                                            tracing::info!("Data stream accepted for tunnel: {}", tunnel_id);
+                                        },
+                                        RegisterResponse::Rejected(reason) => {
+                                            tracing::warn!("Data stream rejected for tunnel {}: {}", tunnel_info.tunnel_id, reason);
+                                            // Skip this request if rejected.
+                                            continue;
+                                        },
+                                        _ => {
+                                            tracing::warn!("Unexpected register response frame: {:?}", reg_res);
+                                            // Skip this request if unexpected response.
+                                            continue;
+                                        },
+                                    }
                                     self.stream_sender.send(new_stream).await?;
                                     tracing::info!("Created new stream for tunnel request: {}", tunnel_info);
                                 },
