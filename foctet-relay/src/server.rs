@@ -110,7 +110,24 @@ impl RelayServerActor {
                     match cmd {
                         ServerCommand::Shutdown => {
                             tracing::info!("RelayServer shutting down");
-                            // TODO: Clean up resources, close connections, etc.
+                            // Clean up resources, close connections, etc.
+                            let mut nodes = self.state.nodes.write().await;
+                            nodes.clear();
+                            drop(nodes);
+                            
+                            let mut pending_streams = self.state.pending_streams.write().await;
+                            pending_streams.clear();
+                            drop(pending_streams);
+                            
+                            let mut control_streams = self.state.control_streams.write().await;
+                            control_streams.clear();
+                            drop(control_streams);
+
+                            let mut tunnels = self.state.tunnels.write().await;
+                            tunnels.clear();
+                            drop(tunnels);
+                            tracing::info!("RelayServer shutdown complete");
+                            // Break the loop to exit the actor loop
                             break;
                         }
                     }
@@ -214,9 +231,11 @@ impl RelayServerActor {
                                             Err(e) => {
                                                 match e {
                                                     Ok(_stream) => {
-                                                        // TODO!
+                                                        tracing::warn!("Receiver dropped before stream could be delivered (stream still valid)");
                                                     },
-                                                    Err(e) => tracing::info!("Error sending data stream response: {:?}", e),
+                                                    Err(err) => {
+                                                        tracing::warn!("Receiver dropped before stream could be delivered (error case): {:?}", err);
+                                                    }
                                                 }
                                             },
                                         }
