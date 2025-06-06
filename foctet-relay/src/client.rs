@@ -23,8 +23,6 @@ pub struct RelayClientActor {
 
 impl RelayClientActor {
     pub async fn run(mut self) -> Result<()> {
-        // TODO: Select stack address from relay address which matches the transport protocol
-        // and connect to the relay server.
         let addrs = self.relay_addr.get_direct_addrs(&self.transport.transport_kind(), self.allow_loopback);
         if addrs.is_empty() {
             return Err(anyhow!("No valid addresses found for relay connection"));
